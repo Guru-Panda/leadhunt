@@ -61,6 +61,9 @@ async def send_otp_email(to_email: str, otp_code: str) -> bool:
     msg["To"] = to_email
     msg.attach(MIMEText(_otp_html(otp_code), "html"))
 
+    # Port 465 = implicit TLS (use_tls=True); 587 = STARTTLS (start_tls=True).
+    # Many cloud hosts (Railway included) block 587 outbound — 465 usually works.
+    tls_kwargs: dict = {"use_tls": True} if settings.SMTP_PORT == 465 else {"start_tls": True}
     try:
         await aiosmtplib.send(
             msg,
@@ -68,7 +71,7 @@ async def send_otp_email(to_email: str, otp_code: str) -> bool:
             port=settings.SMTP_PORT,
             username=settings.SMTP_USER,
             password=settings.SMTP_PASSWORD,
-            start_tls=True,
+            **tls_kwargs,
         )
         log.info(f"OTP email sent to {to_email}")
         return True
