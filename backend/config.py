@@ -30,12 +30,16 @@ class Settings(BaseSettings):
     HUNTER_API_KEY: str = ""
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
 
-    # Email — optional; when blank, OTP is logged to console (dev mode)
+    # Email delivery — three tiers, tried in order:
+    # 1. Resend (HTTPS API, no port-blocking issues — RECOMMENDED on Railway)
+    # 2. Gmail SMTP (works locally; Railway blocks ports 587/465 on Hobby tier)
+    # 3. Dev mode (no creds → OTP surfaced in API response + console)
+    RESEND_API_KEY: str = ""
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
-    SMTP_FROM: str = "LeadHunt <noreply@leadhunt.local>"
+    SMTP_FROM: str = "LeadHunt <onboarding@resend.dev>"
 
     # App
     FRONTEND_URL: str = "http://localhost:5173"
@@ -55,8 +59,8 @@ def _check_optional_features() -> None:
     missing: list[str] = []
     if not settings.GROQ_API_KEY:
         missing.append("GROQ_API_KEY (ICP translator, scorer, discoverer disabled)")
-    if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
-        missing.append("SMTP_USER/SMTP_PASSWORD (OTP emails will be logged to console instead)")
+    if not settings.RESEND_API_KEY and (not settings.SMTP_USER or not settings.SMTP_PASSWORD):
+        missing.append("RESEND_API_KEY or SMTP_USER/SMTP_PASSWORD (OTP emails will be logged to console instead)")
     if not settings.GITHUB_TOKEN:
         missing.append("GITHUB_TOKEN (GitHub source disabled)")
     if missing:
