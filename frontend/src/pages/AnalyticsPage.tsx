@@ -6,16 +6,30 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Users, MailCheck, MessageCircle, Sparkles } from 'lucide-react'
 
-const PIE_COLORS = ['#6366f1', '#f26625', '#24292e', '#ff6600', '#ff4500', '#003a9b', '#000', '#4285f4', '#8b5cf6', '#6b7280']
+const PIE_COLORS = ['#6366f1', '#d946ef', '#06b6d4', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#4285f4', '#ff6600', '#ff4500']
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+const STAT_TONES = {
+  purple:  { cls: 'stat-card-purple',  iconCls: 'text-primary',         valueCls: 'text-indigo-900' },
+  emerald: { cls: 'stat-card-emerald', iconCls: 'text-emerald-600',     valueCls: 'text-emerald-900' },
+  amber:   { cls: 'stat-card-amber',   iconCls: 'text-amber-600',       valueCls: 'text-amber-900' },
+  pink:    { cls: 'stat-card-pink',    iconCls: 'text-accent-fuchsia',  valueCls: 'text-fuchsia-900' },
+} as const
+
+function StatCard({ label, value, sub, tone, icon: Icon }: {
+  label: string; value: string | number; sub?: string;
+  tone: keyof typeof STAT_TONES; icon: React.ElementType
+}) {
+  const t = STAT_TONES[tone]
   return (
-    <div className="card text-center">
-      <div className="text-3xl font-bold text-gray-900">{value}</div>
-      <div className="text-sm font-medium text-gray-700 mt-1">{label}</div>
-      {sub && <div className="text-xs text-gray-400 mt-0.5">{sub}</div>}
+    <div className={t.cls}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">{label}</span>
+        <Icon className={`w-4 h-4 ${t.iconCls}`} />
+      </div>
+      <div className={`text-3xl font-bold tabular-nums ${t.valueCls}`}>{value}</div>
+      {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
     </div>
   )
 }
@@ -37,7 +51,7 @@ export default function AnalyticsPage() {
     <div className="p-6 max-w-5xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Analytics</h1>
+          <h1 className="text-2xl font-bold text-gradient">Analytics</h1>
           <p className="text-sm text-gray-500 mt-0.5">Lead pipeline performance</p>
         </div>
         <select
@@ -59,11 +73,11 @@ export default function AnalyticsPage() {
       ) : !analytics ? null : (
         <>
           {/* Stats */}
-          <div className="grid grid-cols-4 gap-4 mb-6">
-            <StatCard label="Total leads" value={analytics.total_leads.toLocaleString()} />
-            <StatCard label="Verified emails" value={`${analytics.verified_email_pct}%`} sub="of all leads" />
-            <StatCard label="Contacted" value={`${analytics.contacted_pct}%`} sub="of all leads" />
-            <StatCard label="Avg intent score" value={`${(analytics.avg_intent_score * 100).toFixed(0)}%`} />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <StatCard tone="purple"  icon={Users}         label="Total leads"      value={analytics.total_leads.toLocaleString()} />
+            <StatCard tone="emerald" icon={MailCheck}     label="Verified emails"  value={`${analytics.verified_email_pct}%`} sub="of all leads" />
+            <StatCard tone="amber"   icon={MessageCircle} label="Contacted"        value={`${analytics.contacted_pct}%`} sub="of all leads" />
+            <StatCard tone="pink"    icon={Sparkles}      label="Avg intent score" value={`${(analytics.avg_intent_score * 100).toFixed(0)}%`} />
           </div>
 
           {/* Line chart: leads over time */}

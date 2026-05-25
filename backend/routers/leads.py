@@ -172,6 +172,53 @@ def update_lead_status(
     return lead
 
 
+def _unwanted_query(db: Session, user_id: int, strategy_id: int):
+    """Leads the user has actively rejected: thumbs-down (feedback==-1) OR status=='rejected'."""
+    return (
+        db.query(Lead)
+        .filter(
+            Lead.user_id == user_id,
+            Lead.strategy_id == strategy_id,
+            or_(Lead.feedback == -1, Lead.status == "rejected"),
+        )
+    )
+
+
+@router.get("/unwanted-count")
+def unwanted_count(
+    strategy_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Count leads that would be purged by /leads/purge?strategy_id=X."""
+    # Verify ownership
+    s = db.get(Strategy, strategy_id)
+    if not s or s.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    count = _unwanted_query(db, current_user.id, strategy_id).count()
+    return {"count": count}
+
+
+@router.delete("/purge", status_code=200)
+def purge_unwanted(
+    strategy_id: int = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete all leads for this strategy that are disliked (feedback==-1) or rejected.
+
+    Keeps liked, contacted, qualified, ignored, and untouched 'new' leads.
+    """
+    s = db.get(Strategy, strategy_id)
+    if not s or s.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    q = _unwanted_query(db, current_user.id, strategy_id)
+    deleted = q.delete(synchronize_session=False)
+    db.commit()
+    log.info(f"Purged {deleted} unwanted leads from strategy {strategy_id}")
+    return {"deleted": deleted}
+
+
 @router.post("/{lead_id}/re-enrich", response_model=LeadOut)
 def re_enrich_lead(
     lead_id: int,

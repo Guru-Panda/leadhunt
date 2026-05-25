@@ -4,9 +4,24 @@ export interface User {
   id: number
   email: string
   is_verified: boolean
+  full_name: string | null
+  role: string | null
+  location: string | null
+  bio: string | null
   company_name: string | null
+  company_website: string | null
   employee_count: string | null
   created_at: string
+}
+
+export interface UserUpdate {
+  full_name?: string
+  role?: string
+  location?: string
+  bio?: string
+  company_name?: string
+  company_website?: string
+  employee_count?: string
 }
 
 export interface TokenResponse {
@@ -33,6 +48,6 @@ export const authApi = {
   me: (): Promise<{ data: User }> =>
     api.get('/auth/me'),
 
-  updateMe: (data: { company_name?: string; employee_count?: string }) =>
+  updateMe: (data: UserUpdate): Promise<{ data: User }> =>
     api.patch('/auth/me', data),
 }

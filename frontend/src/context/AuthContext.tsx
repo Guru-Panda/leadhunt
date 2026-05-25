@@ -17,7 +17,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchMe = useCallback(async () => {
     // Demo mode: ?demo=true skips the API call
     if (new URLSearchParams(window.location.search).get('demo') === 'true') {
-      setUser({ id: 0, email: 'demo@leadhunt.io', is_verified: true, company_name: 'Acme Corp', employee_count: '11-50', created_at: new Date().toISOString() })
+      setUser({
+        id: 0,
+        email: 'demo@leadhunt.io',
+        is_verified: true,
+        full_name: 'Demo User',
+        role: 'Founder',
+        location: null,
+        bio: null,
+        company_name: 'Acme Corp',
+        company_website: null,
+        employee_count: '11-50',
+        created_at: new Date().toISOString(),
+      })
       setIsLoading(false)
       return
     }

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Crosshair, Loader2 } from 'lucide-react'
 import { authApi, type TokenResponse } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
+import AuthHero from '../components/AuthHero'
 
 type Step = 'credentials' | 'otp'
 
@@ -63,24 +64,31 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2.5 justify-center mb-8">
-          <div className="w-9 h-9 bg-primary rounded-lg flex items-center justify-center">
-            <Crosshair className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-bold text-xl text-gray-900">LeadHunt</span>
-        </div>
+    <div className="min-h-screen flex">
+      <AuthHero
+        title="Welcome back. Your leads are waiting."
+        subtitle="Pick up where you left off — your strategies have been hunting in the background."
+      />
 
-        <div className="card">
-          <h1 className="text-lg font-semibold text-gray-900 mb-1">
-            {step === 'otp' ? 'Enter your code' : 'Sign in'}
-          </h1>
-          <p className="text-sm text-gray-500 mb-6">
-            {step === 'otp'
-              ? `We sent a 6-digit code to ${email}`
-              : 'Welcome back to LeadHunt'}
-          </p>
+      <div className="flex-1 md:w-1/2 lg:w-2/5 flex items-center justify-center p-6 sm:p-12">
+        <div className="w-full max-w-sm">
+          {/* Mobile-only brand chip */}
+          <div className="md:hidden flex items-center gap-2.5 justify-center mb-8">
+            <div className="w-9 h-9 brand-chip rounded-lg flex items-center justify-center">
+              <Crosshair className="w-5 h-5 text-white" />
+            </div>
+            <span className="font-bold text-xl text-gradient">LeadHunt</span>
+          </div>
+
+          <div className="card !p-8">
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">
+              {step === 'otp' ? 'Enter your code ✨' : 'Sign in 👋'}
+            </h1>
+            <p className="text-sm text-gray-500 mb-6">
+              {step === 'otp'
+                ? `We sent a 6-digit code to ${email}`
+                : 'Welcome back to LeadHunt'}
+            </p>
 
           {error && (
             <div className="mb-4 px-3 py-2.5 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">
@@ -166,14 +174,15 @@ export default function LoginPage() {
               </button>
             </form>
           )}
-        </div>
+          </div>
 
-        <p className="text-center text-sm text-gray-500 mt-5">
-          No account?{' '}
-          <Link to="/signup" className="text-primary hover:underline font-medium">
-            Sign up
-          </Link>
-        </p>
+          <p className="text-center text-sm text-gray-500 mt-5">
+            No account?{' '}
+            <Link to="/signup" className="text-primary hover:underline font-semibold">
+              Sign up free
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )

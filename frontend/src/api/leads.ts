@@ -70,6 +70,12 @@ export const leadsApi = {
   reEnrich: (id: number): Promise<{ data: Lead }> =>
     api.post(`/leads/${id}/re-enrich`),
 
+  unwantedCount: (strategy_id: number): Promise<{ data: { count: number } }> =>
+    api.get('/leads/unwanted-count', { params: { strategy_id } }),
+
+  purgeUnwanted: (strategy_id: number): Promise<{ data: { deleted: number } }> =>
+    api.delete('/leads/purge', { params: { strategy_id } }),
+
   exportCsvUrl: (filters: LeadFilters = {}) => {
     const base = (import.meta.env.VITE_API_URL || '/api') + '/leads/export-csv'
     const params = new URLSearchParams()

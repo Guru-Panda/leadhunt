@@ -24,6 +24,10 @@ async def lifespan(app: FastAPI):
     try:
         from backend.database import engine, Base
         Base.metadata.create_all(bind=engine)
+        # Lightweight in-place migrations for columns added after initial deploy.
+        # SQLAlchemy create_all() doesn't ALTER existing tables, so we add columns by hand.
+        from backend.startup_migrations import run_inline_migrations
+        run_inline_migrations(engine)
         log.info("Database tables created/verified")
     except Exception as e:
         log.error(f"DB init failed (will retry on next request): {e}")

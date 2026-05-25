@@ -7,21 +7,79 @@
     box-sizing: border-box;
   }
   body {
-    @apply bg-white text-gray-900 font-sans antialiased;
+    @apply text-gray-900 font-sans antialiased;
+    background-color: #fafafe;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(99,102,241,0.06) 0%, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(217,70,239,0.05) 0%, transparent 50%);
+    background-attachment: fixed;
   }
 }
 
 @layer components {
+  /* Primary button — bright gradient + hover lift */
   .btn-primary {
-    @apply bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply text-white px-4 py-2 rounded-lg font-medium transition-all duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0;
+    background-image: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+    box-shadow: 0 4px 12px -2px rgba(99,102,241,0.35);
   }
+  .btn-primary:hover:not(:disabled) {
+    background-image: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px -4px rgba(99,102,241,0.45);
+  }
+
   .btn-secondary {
-    @apply bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-lg font-medium hover:bg-gray-50 transition-colors;
+    @apply bg-white text-gray-700 border border-gray-200 px-4 py-2 rounded-lg font-medium
+           hover:bg-gray-50 hover:border-gray-300 transition-all;
   }
+
   .input-field {
-    @apply w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors;
+    @apply w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white
+           focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary
+           transition-colors;
   }
+
+  /* Card — softer shadow + subtle hover lift */
   .card {
-    @apply bg-white border border-gray-200 rounded-xl p-6;
+    @apply bg-white border border-gray-100 rounded-xl p-6 transition-shadow duration-200;
+    box-shadow: 0 1px 3px 0 rgba(0,0,0,0.04), 0 1px 2px 0 rgba(0,0,0,0.02);
+  }
+  .card:hover {
+    box-shadow: 0 10px 25px -3px rgba(99,102,241,0.10), 0 4px 6px -2px rgba(0,0,0,0.04);
+  }
+
+  /* Colored stat card — used on Analytics */
+  .stat-card {
+    @apply rounded-xl p-5 border transition-all duration-200;
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px -3px rgba(99,102,241,0.12), 0 4px 6px -2px rgba(0,0,0,0.04);
+  }
+  .stat-card-purple { @apply stat-card; background-image: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border-color: #ddd6fe; }
+  .stat-card-blue   { @apply stat-card; background-image: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-color: #bfdbfe; }
+  .stat-card-emerald{ @apply stat-card; background-image: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-color: #a7f3d0; }
+  .stat-card-amber  { @apply stat-card; background-image: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border-color: #fde68a; }
+  .stat-card-pink   { @apply stat-card; background-image: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%); border-color: #fbcfe8; }
+
+  /* Gradient text — for hero headings */
+  .text-gradient {
+    background-image: linear-gradient(135deg, #6366f1 0%, #d946ef 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Sidebar gradient panel */
+  .sidebar-gradient {
+    background-image: linear-gradient(180deg, #ffffff 0%, #faf8ff 60%, #f5f3ff 100%);
+  }
+
+  /* Brand chip — used for logo */
+  .brand-chip {
+    background-image: linear-gradient(135deg, #6366f1 0%, #d946ef 100%);
+    box-shadow: 0 4px 12px -2px rgba(99,102,241,0.4);
   }
 }

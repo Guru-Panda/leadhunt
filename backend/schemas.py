@@ -35,14 +35,25 @@ class UserOut(BaseModel):
     id: int
     email: str
     is_verified: bool
-    company_name: str | None
-    employee_count: str | None
+    full_name: str | None = None
+    role: str | None = None
+    location: str | None = None
+    bio: str | None = None
+    company_name: str | None = None
+    company_website: str | None = None
+    employee_count: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
+
 class UserUpdate(BaseModel):
+    full_name: str | None = None
+    role: str | None = None
+    location: str | None = None
+    bio: str | None = None
     company_name: str | None = None
+    company_website: str | None = None
     employee_count: str | None = None
 
 

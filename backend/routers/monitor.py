@@ -144,6 +144,33 @@ def toggle_source(
     return ds
 
 
+@router.delete("/discovered-sources/cleanup-broken")
+def cleanup_broken_sources(
+    strategy_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk-delete all DiscoveredSource rows marked 'broken' for this user.
+
+    If strategy_id is provided, scopes to that strategy only.
+    """
+    user_strategy_ids = [s.id for s in db.query(Strategy.id).filter(Strategy.user_id == current_user.id).all()]
+    if not user_strategy_ids:
+        return {"deleted": 0}
+    q = db.query(DiscoveredSource).filter(
+        DiscoveredSource.strategy_id.in_(user_strategy_ids),
+        DiscoveredSource.status == "broken",
+    )
+    if strategy_id is not None:
+        if strategy_id not in user_strategy_ids:
+            raise HTTPException(status_code=403, detail="Forbidden.")
+        q = q.filter(DiscoveredSource.strategy_id == strategy_id)
+    deleted = q.delete(synchronize_session=False)
+    db.commit()
+    log.info(f"Cleaned up {deleted} broken discovered sources for user {current_user.id}")
+    return {"deleted": deleted}
+
+
 @router.delete("/discovered-sources/{source_id}", status_code=204)
 def delete_source(
     source_id: int,

@@ -149,10 +149,10 @@ def update_me(
     current_user: User = Depends(auth_utils.get_current_user),
     db: Session = Depends(get_db),
 ):
-    if body.company_name is not None:
-        current_user.company_name = body.company_name
-    if body.employee_count is not None:
-        current_user.employee_count = body.employee_count
+    # Only apply fields explicitly provided in the request (None = "don't touch")
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(current_user, field, value)
     db.commit()
     db.refresh(current_user)
     return current_user

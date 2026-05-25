@@ -19,19 +19,21 @@ ICP:
 - Target roles: {strategy.target_roles}
 - Target industries: {strategy.target_industries}
 
-Already covered (do NOT suggest): GitHub, ProductHunt, Y Combinator, HackerNews, Reddit, Indeed, Wellfound, Google CSE, WHOIS, Bing, Companies House.
+Already covered (do NOT suggest): GitHub, ProductHunt, Y Combinator, HackerNews, Reddit, Indeed, Wellfound, Google CSE, WHOIS, Bing, Companies House, RemoteOK.
 
-Look for things like:
-- Industry-specific job boards
-- Niche directories
-- Public community member lists (Indie Hackers, Dev.to, Hashnode)
-- Conference speaker pages
-- Awards lists (Forbes 30 Under 30, Fast Company)
-- Industry blog/podcast author pages
-- Newsletter directories (Substack discover)
-- Open-source maintainer lists
+CRITICAL — AVOID these site categories (they don't return scrapable HTML):
+- DEAD sites: Lanyrd (shut down 2014), Klout, Quibb, Branch.com, App.net, any pre-2018 site that's clearly defunct
+- JS-only SPAs (return empty HTML to scrapers): Crunchbase, Pitchbook, AngelList/Wellfound profile pages, modern Notion public pages, Mixpanel customer pages
+- HARD bot-blocked: LinkedIn pages directly (use site:linkedin.com via search instead), Indeed, Glassdoor, Twitter/X scraping, Facebook
+- Paywalled: Bloomberg, WSJ, FT, Forbes premium articles, NYT
+- Aggregator-only metadata pages with no people: Stackshare tech pages without team sections, Wikipedia category pages
+
+PREFER sites that:
+- Return REAL HTML with names + bios server-rendered (no JS execution required)
+- Are NICHE / industry-specific (less likely to bot-block)
+- Have OPEN member directories, speaker lists, OSS maintainer lists, podcast guest pages, conference attendee pages, awards lists, "state of X" survey respondents
+- Examples that work well: Indie Hackers (member profiles), Dev.to/Hashnode (author pages), podcast show notes with guest names + Twitter/LinkedIn, conference speaker pages (e.g. PyConIndia.com/speakers), Substack discovery pages, GitHub topic pages
 - Public Meetup.com event pages
-- Crunchbase company news (free pages)
 
 Return ONLY JSON list (no markdown):
 [

@@ -104,6 +104,11 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
         ds.status = "broken"
         log.info(f"Marking discovered source {ds.name} as broken (0 leads in {ds.runs} runs)")
 
+    # Auto-delete persistently broken sources to stop monitor-table pollution
+    if ds.runs >= 5 and ds.leads_found_total == 0 and ds.status == "broken":
+        log.info(f"Auto-deleting broken discovered source {ds.name} ({ds.runs} runs, 0 leads)")
+        db.delete(ds)
+
     db.commit()
 
 

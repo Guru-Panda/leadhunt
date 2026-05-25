@@ -72,6 +72,11 @@ export default function MonitorPage() {
     },
   })
 
+  const cleanupBrokenMut = useMutation({
+    mutationFn: () => monitorApi.cleanupBroken(strategyId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['discovered-sources'] }),
+  })
+
   const addUrlMut = useMutation({
     mutationFn: ({ url, strategy_id }: { url: string; strategy_id: number }) =>
       monitorApi.addCustomUrl(url, strategy_id),
@@ -94,7 +99,7 @@ export default function MonitorPage() {
     <div className="p-6 max-w-5xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Monitor</h1>
+          <h1 className="text-2xl font-bold text-gradient">Monitor</h1>
           <p className="text-sm text-gray-500 mt-0.5">Track source health and discovered leads</p>
         </div>
         <div className="flex items-center gap-3">
@@ -197,12 +202,27 @@ export default function MonitorPage() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold text-gray-900">Discovered sources</h2>
-          <button
-            onClick={() => { setAddingUrl(!addingUrl); setUrlError('') }}
-            className="btn-secondary flex items-center gap-1.5 text-sm"
-          >
-            <Plus className="w-3.5 h-3.5" /> Add custom URL
-          </button>
+          <div className="flex items-center gap-2">
+            {discovered.some((d) => d.status === 'broken') && (
+              <button
+                onClick={() => cleanupBrokenMut.mutate()}
+                disabled={cleanupBrokenMut.isPending}
+                className="btn-secondary flex items-center gap-1.5 text-sm text-red-600 hover:bg-red-50"
+                title={`Delete ${discovered.filter((d) => d.status === 'broken').length} broken source(s)`}
+              >
+                {cleanupBrokenMut.isPending
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Trash2 className="w-3.5 h-3.5" />}
+                Clean up broken
+              </button>
+            )}
+            <button
+              onClick={() => { setAddingUrl(!addingUrl); setUrlError('') }}
+              className="btn-secondary flex items-center gap-1.5 text-sm"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add custom URL
+            </button>
+          </div>
         </div>
 
         {addingUrl && strategyId && (

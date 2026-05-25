@@ -29,7 +29,14 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Profile
+    full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(120), nullable=True)            # job title, e.g. "Founder"
+    location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Company
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company_website: Mapped[str | None] = mapped_column(String(255), nullable=True)
     employee_count: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 

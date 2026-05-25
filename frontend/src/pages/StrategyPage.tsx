@@ -120,9 +120,9 @@ export default function StrategyPage() {
   return (
     <div className="flex h-full">
       {/* Sidebar list */}
-      <div className="w-64 shrink-0 border-r border-gray-200 bg-white flex flex-col">
+      <div className="w-64 shrink-0 border-r border-gray-100 bg-white/70 backdrop-blur flex flex-col">
         <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900 text-sm">Strategies</h2>
+          <h2 className="font-bold text-gradient text-sm uppercase tracking-wide">Strategies</h2>
           <button onClick={startCreating} className="w-7 h-7 flex items-center justify-center rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors">
             <Plus className="w-4 h-4" />
           </button>

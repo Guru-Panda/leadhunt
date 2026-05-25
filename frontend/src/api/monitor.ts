@@ -54,6 +54,9 @@ export const monitorApi = {
   deleteSource: (id: number) =>
     api.delete(`/monitor/discovered-sources/${id}`),
 
+  cleanupBroken: (strategy_id?: number): Promise<{ data: { deleted: number } }> =>
+    api.delete('/monitor/discovered-sources/cleanup-broken', { params: strategy_id ? { strategy_id } : {} }),
+
   retestSource: (id: number) =>
     api.post(`/monitor/discovered-sources/${id}/retest`),
 
