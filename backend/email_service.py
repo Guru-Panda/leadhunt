@@ -44,6 +44,47 @@ def resend_configured() -> bool:
     return bool(settings.RESEND_API_KEY)
 
 
+def brevo_configured() -> bool:
+    return bool(settings.BREVO_API_KEY)
+
+
+def _parse_from(from_str: str) -> tuple[str, str]:
+    """Parse 'Name <email@x.com>' into (name, email)."""
+    import re
+    m = re.match(r"^\s*(.*?)\s*<([^>]+)>\s*$", from_str)
+    if m:
+        return m.group(1) or "LeadHunt", m.group(2)
+    return "LeadHunt", from_str.strip()
+
+
+async def _send_via_brevo(to_email: str, otp_code: str) -> bool:
+    """Send via Brevo (formerly Sendinblue) HTTPS API. Free 300/day, no domain
+    verification required — sender email just needs to be added in Brevo dashboard.
+    """
+    sender_name, sender_email = _parse_from(settings.SMTP_FROM)
+    payload = {
+        "sender": {"name": sender_name, "email": sender_email},
+        "to": [{"email": to_email}],
+        "subject": f"Your LeadHunt verification code: {otp_code}",
+        "htmlContent": _otp_html(otp_code),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://api.brevo.com/v3/smtp/email",
+                json=payload,
+                headers={"api-key": settings.BREVO_API_KEY, "accept": "application/json"},
+            )
+        if 200 <= r.status_code < 300:
+            log.info(f"Brevo: OTP email sent to {to_email} (id={r.json().get('messageId', '?')})")
+            return True
+        log.error(f"Brevo send failed for {to_email}: {r.status_code} {r.text[:300]}")
+        return False
+    except Exception as e:
+        log.error(f"Brevo request error for {to_email}: {e}")
+        return False
+
+
 async def _send_via_resend(to_email: str, otp_code: str) -> bool:
     """Send via Resend's HTTPS API. Works on Railway (no port blocking)."""
     payload = {
@@ -95,23 +136,22 @@ async def _send_via_smtp(to_email: str, otp_code: str) -> bool:
 
 
 async def send_otp_email(to_email: str, otp_code: str) -> bool:
-    """Try Resend first (HTTPS, no port-blocking), then SMTP, then dev fallback."""
+    """Try providers in order: Brevo -> Resend -> SMTP -> dev console."""
+    if brevo_configured():
+        if await _send_via_brevo(to_email, otp_code):
+            return True
     if resend_configured():
         if await _send_via_resend(to_email, otp_code):
             return True
-        # Fall through to SMTP if Resend failed and SMTP is also configured
     if smtp_configured():
         if await _send_via_smtp(to_email, otp_code):
             return True
-        log.warning(f"DEV FALLBACK — OTP for {to_email}: {otp_code}")
-        return False
-    if not resend_configured():
-        # Neither configured — dev mode
-        log.warning(
-            "\n"
-            "===============================================================\n"
-            f"  DEV MODE: no email provider — OTP for {to_email}\n"
-            f"  CODE: {otp_code}\n"
-            "===============================================================\n"
-        )
+    # Nothing worked — log loudly so devs can grab the code
+    log.warning(
+        "\n"
+        "===============================================================\n"
+        f"  DEV FALLBACK — OTP for {to_email}\n"
+        f"  CODE: {otp_code}\n"
+        "===============================================================\n"
+    )
     return False

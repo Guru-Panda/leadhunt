@@ -30,10 +30,12 @@ class Settings(BaseSettings):
     HUNTER_API_KEY: str = ""
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
 
-    # Email delivery — three tiers, tried in order:
-    # 1. Resend (HTTPS API, no port-blocking issues — RECOMMENDED on Railway)
-    # 2. Gmail SMTP (works locally; Railway blocks ports 587/465 on Hobby tier)
-    # 3. Dev mode (no creds → OTP surfaced in API response + console)
+    # Email delivery — four tiers, tried in order:
+    # 1. Brevo (HTTPS, 300/day free, sender-email verification only — RECOMMENDED if no domain)
+    # 2. Resend (HTTPS, 100/day free, needs domain verification for arbitrary recipients)
+    # 3. Gmail SMTP (works locally; Railway blocks ports 587/465 on Hobby tier)
+    # 4. Dev mode (no creds → OTP surfaced in API response + console)
+    BREVO_API_KEY: str = ""
     RESEND_API_KEY: str = ""
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
@@ -59,8 +61,8 @@ def _check_optional_features() -> None:
     missing: list[str] = []
     if not settings.GROQ_API_KEY:
         missing.append("GROQ_API_KEY (ICP translator, scorer, discoverer disabled)")
-    if not settings.RESEND_API_KEY and (not settings.SMTP_USER or not settings.SMTP_PASSWORD):
-        missing.append("RESEND_API_KEY or SMTP_USER/SMTP_PASSWORD (OTP emails will be logged to console instead)")
+    if not (settings.BREVO_API_KEY or settings.RESEND_API_KEY or (settings.SMTP_USER and settings.SMTP_PASSWORD)):
+        missing.append("BREVO_API_KEY or RESEND_API_KEY or SMTP_USER/SMTP_PASSWORD (OTP emails logged to console)")
     if not settings.GITHUB_TOKEN:
         missing.append("GITHUB_TOKEN (GitHub source disabled)")
     if missing:
