@@ -95,13 +95,19 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     # Build queries from the ICP — prefer role + industry combos
     roles = (icp_params.get("target_roles") or [])[:2]
     industries = (icp_params.get("target_industries") or [])[:2]
+    intent_keywords = (icp_params.get("buyer_intent_keywords") or [])[:3]
     exclude = " ".join(f"-{w}" for w in (icp_params.get("exclude_keywords") or [])[:4])
 
     queries: list[str] = []
+    # Intent-driven queries get priority — they target the actual buyer signal
+    for intent in intent_keywords:
+        for industry in industries:
+            queries.append(f'"{intent}" "{industry}" {exclude}'.strip())
+    # Role × industry as fallback
     for role in roles:
         for industry in industries:
-            queries.append(f'"{role}" "{industry}" startup founder {exclude}'.strip())
-    # Fallback: just role + industry
+            queries.append(f'"{role}" "{industry}" {exclude}'.strip())
+    # Last-ditch fallback
     if not queries:
         for industry in industries:
             queries.append(f'{industry} startup founder')

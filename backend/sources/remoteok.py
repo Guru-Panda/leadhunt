@@ -20,12 +20,21 @@ def _word_in(needle: str, haystack: str) -> bool:
     return re.search(r"\b" + re.escape(needle.lower()) + r"\b", haystack.lower()) is not None
 
 
-def _matches_icp(job: dict, target_roles: list[str], tech_keywords: list[str]) -> bool:
-    """Role MUST appear (whole-word) in the position title. Tech keyword in tags is bonus."""
-    position = job.get("position", "")
-    tags_str = " ".join(job.get("tags", []))
+def _matches_icp(job: dict, target_roles: list[str], tech_keywords: list[str], intent_keywords: list[str]) -> bool:
+    """STRICT rules:
+      - Intent keywords (if set): must appear in position OR description OR tags.
+      - Otherwise: role in position title OR tech keyword in tags.
+    """
+    position = job.get("position", "") or ""
+    description = (job.get("description", "") or "")[:1500]
+    tags_str = " ".join(job.get("tags", []) or [])
+    full_blob = f"{position} {description} {tags_str}"
     if not position:
         return False
+    # When intent keywords are set, they're MANDATORY — anything not signaling
+    # the buyer intent isn't a useful lead, even if role/tech happen to match.
+    if intent_keywords:
+        return any(_word_in(kw, full_blob) for kw in intent_keywords if kw)
     return (
         any(_word_in(role, position) for role in target_roles)
         or any(_word_in(kw, tags_str) for kw in tech_keywords)
@@ -49,7 +58,8 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     """
     target_roles = icp_params.get("target_roles", [])
     tech_keywords = icp_params.get("tech_keywords", [])
-    if not target_roles and not tech_keywords:
+    intent_keywords = icp_params.get("buyer_intent_keywords", [])
+    if not target_roles and not tech_keywords and not intent_keywords:
         return []
 
     try:
@@ -67,7 +77,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     seen_companies: set[str] = set()
 
     for job in jobs:
-        if not _matches_icp(job, target_roles, tech_keywords):
+        if not _matches_icp(job, target_roles, tech_keywords, intent_keywords):
             continue
         company = job.get("company", "")
         if not company or company in seen_companies:

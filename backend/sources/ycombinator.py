@@ -142,9 +142,26 @@ def _extract_domain(url: str | None) -> str | None:
         return None
 
 
+def _matches_intent(text: str, intent_keywords: list[str]) -> bool:
+    """Strict intent filter: at least one keyword (case-insensitive) must appear in `text`.
+
+    Returns True if no intent keywords given (no-op filter).
+    """
+    if not intent_keywords:
+        return True
+    hay = (text or "").lower()
+    return any(kw.lower() in hay for kw in intent_keywords if kw)
+
+
 def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     industries = icp_params.get("industries", [])
+    intent_keywords = icp_params.get("buyer_intent_keywords", [])
+
+    # If intent keywords exist, ALSO query Algolia with them — surfaces YC companies
+    # whose one_liner directly mentions the intent (e.g. "we sponsor podcasts").
     queries = industries[:3] if industries else [""]
+    if intent_keywords:
+        queries = queries + intent_keywords[:3]
     leads: list[dict] = []
     seen_companies: set[str] = set()
 
@@ -162,6 +179,11 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             domain = _extract_domain(hit.get("website"))
             one_liner = hit.get("one_liner", "")
             batch = hit.get("batch", "")
+
+            # STRICT intent filter — skip companies whose name + one_liner don't
+            # mention any of the buyer-intent keywords. (No-op if intent_keywords empty.)
+            if not _matches_intent(f"{company_name} {one_liner}", intent_keywords):
+                continue
 
             yc_page = f"https://www.ycombinator.com/companies/{slug}"
             snippet_base = f"YC {batch} — {company_name}\n\n{one_liner}"

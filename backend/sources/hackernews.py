@@ -76,6 +76,19 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     leads: list[dict] = []
     seen_ids: set[str] = set()
     hn_queries = icp_params.get("hn_queries", [])
+    intent_keywords = icp_params.get("buyer_intent_keywords", [])
+
+    # Combine intent keywords with industry-paired terms — most direct way to find
+    # people EXPRESSING the buyer signal in HN posts ("we sponsor X", "looking for KYC tools", etc.)
+    if intent_keywords:
+        industries = icp_params.get("target_industries") or icp_params.get("industries") or []
+        intent_queries = []
+        for ikw in intent_keywords[:3]:
+            intent_queries.append(ikw)
+            for ind in industries[:2]:
+                intent_queries.append(f"{ikw} {ind}")
+        # Intent-driven queries get priority over generic hn_queries
+        hn_queries = intent_queries[:5] + hn_queries[:3]
 
     # ── PASS 1: Search the current Who-is-Hiring thread (email-rich!)
     # Use industries + roles (broader than narrow hn_queries) since hiring posts

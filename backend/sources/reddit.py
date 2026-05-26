@@ -35,12 +35,18 @@ def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
 
 
 def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
-    # Prefer buyer_phrases (high-intent) but fall back to general queries
+    # Intent-keywords first — these are the buyer signals ("looking for sponsors", "we sponsor")
+    intent_keywords = icp_params.get("buyer_intent_keywords") or []
     queries = icp_params.get("hn_queries") or []
-    buyer_phrases = []  # populated by ICP; live in strategy.buyer_phrases — not in raw_icp_params
-    # icp_params doesn't carry buyer_phrases through, so we use hn_queries as the
-    # closest proxy for "people talking about our problem"
-    all_queries = (buyer_phrases or [])[:3] + queries[:3]
+    industries = icp_params.get("industries") or []
+
+    # Build queries: intent + intent×industry pairs, then fall back to generic
+    intent_queries: list[str] = []
+    for ikw in intent_keywords[:3]:
+        intent_queries.append(ikw)
+        for ind in industries[:2]:
+            intent_queries.append(f"{ikw} {ind}")
+    all_queries = intent_queries[:5] + queries[:3]
     if not all_queries:
         return []
 
