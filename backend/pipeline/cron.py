@@ -48,7 +48,14 @@ def save_lead(db: Session, strategy: Strategy, source: str, enriched: dict, scor
             company_industry=enriched.get("company_industry"),
             intent_score=scored.get("intent_score", 0.0),
             intent_signals=scored.get("intent_signals", []),
-            raw_data=enriched.get("raw_data", {}),
+            raw_data={
+                **(enriched.get("raw_data") or {}),
+                # Proof-of-intent payload — surfaced in the lead drawer
+                "matched_phrases": scored.get("matched_phrases", []),
+                "matched_keywords": scored.get("matched_keywords", []),
+                "ai_summary": scored.get("ai_summary", ""),
+                "signal_label": scored.get("signal_label", ""),
+            },
         )
         db.add(lead)
         db.commit()

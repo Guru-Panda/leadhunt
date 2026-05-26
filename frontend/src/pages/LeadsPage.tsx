@@ -9,6 +9,7 @@ import {
 import { leadsApi, type Lead, type LeadFilters } from '../api/leads'
 import { strategyApi } from '../api/strategy'
 import SourceBadge from '../components/SourceBadge'
+import SignalBlock from '../components/SignalBlock'
 import clsx from 'clsx'
 
 const STATUS_COLORS: Record<string, string> = {
@@ -531,19 +532,17 @@ function LeadDrawer({
         )}
 
         {/* Score + signals */}
-        <div className="p-3 bg-gray-50 rounded-lg">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-500 font-medium">Intent score</span>
-            <span className="font-semibold text-gray-900">{Math.round(lead.intent_score * 100)}%</span>
+        {/* SIGNAL — proof-rich intent block (score bar + matched phrases + summary + keywords) */}
+        <SignalBlock lead={lead} />
+
+        {/* Existing intent_signals chips (kept as compact backwards-compat row) */}
+        {lead.intent_signals.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {lead.intent_signals.map((sig) => (
+              <span key={sig} className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded">{sig.replace(/_/g, ' ')}</span>
+            ))}
           </div>
-          {lead.intent_signals.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {lead.intent_signals.map((sig) => (
-                <span key={sig} className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded">{sig.replace(/_/g, ' ')}</span>
-              ))}
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Source */}
         <div className="flex items-center gap-2">
