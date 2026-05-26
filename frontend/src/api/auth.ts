@@ -45,6 +45,9 @@ export const authApi = {
   requestOtp: (email: string): Promise<{ data: OtpSentResponse }> =>
     api.post('/auth/request-otp', { email }),
 
+  resetPassword: (email: string, otp_code: string, new_password: string): Promise<{ data: { detail: string } }> =>
+    api.post('/auth/reset-password', { email, otp_code, new_password }),
+
   me: (): Promise<{ data: User }> =>
     api.get('/auth/me'),
 

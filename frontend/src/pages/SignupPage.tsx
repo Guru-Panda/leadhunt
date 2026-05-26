@@ -1,19 +1,18 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Crosshair, Loader2 } from 'lucide-react'
-import { authApi, type TokenResponse } from '../api/auth'
-import { useAuth } from '../context/AuthContext'
+import { authApi } from '../api/auth'
 import AuthHero from '../components/AuthHero'
 
 type Step = 'email' | 'otp'
 
 export default function SignupPage() {
-  const { login } = useAuth()
   const navigate = useNavigate()
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
   const [otp, setOtp] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [devOtp, setDevOtp] = useState('')
@@ -37,13 +36,23 @@ export default function SignupPage() {
   const handleOtp = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    // Client-side password validation
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.')
+      return
+    }
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
+
     setLoading(true)
     try {
-      const { data } = await authApi.verifyOtp(email, otp, password || undefined)
-      if ('access_token' in data) {
-        await login(data as TokenResponse)
-        navigate('/strategy')
-      }
+      // verify-otp creates the account + sets password. We DISCARD the returned
+      // tokens and send the user to /login to sign in fresh.
+      await authApi.verifyOtp(email, otp, password)
+      navigate('/login?signed_up=1')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(msg || 'Invalid or expired code.')
@@ -141,18 +150,33 @@ export default function SignupPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Password <span className="text-gray-400 font-normal">(optional)</span>
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
                 <input
                   type="password"
                   className="input-field"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Set a password for future logins"
+                  placeholder="At least 8 characters"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
                 />
               </div>
-              <button type="submit" className="btn-primary w-full" disabled={loading || otp.length < 6}>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Confirm password</label>
+                <input
+                  type="password"
+                  className="input-field"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter password"
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+              </div>
+              <button type="submit" className="btn-primary w-full"
+                      disabled={loading || otp.length < 6 || password.length < 8 || confirmPassword.length < 8}>
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Create account'}
               </button>
               <button

@@ -23,6 +23,14 @@ class LoginRequest(BaseModel):
 class OTPLoginRequest(BaseModel):
     email: EmailStr
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+    otp_code: str
+    new_password: str
+
+    def validate_password(self) -> bool:
+        return len(self.new_password) >= 8
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

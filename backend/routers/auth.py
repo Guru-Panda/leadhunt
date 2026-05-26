@@ -15,6 +15,7 @@ from backend.schemas import (
     LoginRequest,
     OTPLoginRequest,
     OTPVerifyRequest,
+    PasswordResetRequest,
     RefreshRequest,
     SignupRequest,
     TokenResponse,
@@ -124,6 +125,45 @@ async def request_otp(body: OTPLoginRequest, db: Session = Depends(get_db)):
         return {"detail": "If that email is registered, an OTP was sent."}
     code = await _send_fresh_otp(body.email, db)
     return _otp_response("OTP sent. Check your email.", code)
+
+
+@router.post("/reset-password", status_code=200)
+def reset_password(body: PasswordResetRequest, db: Session = Depends(get_db)):
+    """Verify the OTP + set a new password. Does NOT issue tokens — the user
+    must explicitly log in with the new password afterwards.
+
+    Reuses the same OTP table as signup/login (request via /auth/request-otp).
+    """
+    if not body.validate_password():
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters.")
+
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user:
+        # Don't reveal whether the email exists
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+
+    now = datetime.now(timezone.utc)
+    otp = (
+        db.query(EmailOTP)
+        .filter(
+            EmailOTP.email == body.email,
+            EmailOTP.otp_code == body.otp_code,
+            EmailOTP.used.is_(False),
+            EmailOTP.expires_at > now.replace(tzinfo=None),
+        )
+        .order_by(EmailOTP.created_at.desc())
+        .first()
+    )
+    if not otp:
+        raise HTTPException(status_code=400, detail="Invalid or expired code.")
+
+    otp.used = True
+    user.hashed_password = auth_utils.hash_password(body.new_password)
+    if not user.is_verified:
+        user.is_verified = True  # password reset confirms the email too
+    db.commit()
+    log.info(f"Password reset for {body.email}")
+    return {"detail": "Password reset successfully. Sign in with your new password."}
 
 
 @router.post("/refresh", response_model=TokenResponse)
