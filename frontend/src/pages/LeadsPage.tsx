@@ -55,8 +55,14 @@ export default function LeadsPage() {
     try {
       const { data } = await leadsApi.unwantedCount(filters.strategy_id)
       setRefreshDialog({ open: true, unwantedCount: data.count })
-    } catch (e) {
-      setRefreshNotice('Could not check lead state. Try again.')
+    } catch (e: unknown) {
+      // Gracefully degrade: open the dialog anyway with unknown count so the user
+      // can still trigger the refresh. Log the real error for diagnostics.
+      const err = e as { response?: { status?: number; data?: { detail?: string } }; message?: string }
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      console.warn('[refresh] unwantedCount failed:', { status, detail, message: err?.message })
+      setRefreshDialog({ open: true, unwantedCount: -1 })
     }
   }
 
@@ -391,7 +397,9 @@ function RefreshConfirmDialog({
         <p className="text-sm text-gray-600 mb-4">
           This will remove{' '}
           <span className="font-semibold text-gray-900">
-            {unwantedCount} unwanted lead{unwantedCount === 1 ? '' : 's'}
+            {unwantedCount < 0
+              ? 'any unwanted leads'
+              : `${unwantedCount} unwanted lead${unwantedCount === 1 ? '' : 's'}`}
           </span>{' '}
           (disliked 👎 or rejected) and then hunt for new leads matching this strategy.
         </p>
