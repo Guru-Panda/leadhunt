@@ -21,9 +21,11 @@ def _word_in(needle: str, haystack: str) -> bool:
 
 
 def _matches_icp(job: dict, target_roles: list[str], tech_keywords: list[str], intent_keywords: list[str]) -> bool:
-    """STRICT rules:
-      - Intent keywords (if set): must appear in position OR description OR tags.
-      - Otherwise: role in position title OR tech keyword in tags.
+    """A job is a lead if ANY of:
+      - Role appears (whole-word) in the position title
+      - Tech keyword appears in the tags
+      - Intent keyword appears anywhere (position / description / tags)
+    Intent boosts surface, not the only signal.
     """
     position = job.get("position", "") or ""
     description = (job.get("description", "") or "")[:1500]
@@ -31,14 +33,18 @@ def _matches_icp(job: dict, target_roles: list[str], tech_keywords: list[str], i
     full_blob = f"{position} {description} {tags_str}"
     if not position:
         return False
-    # When intent keywords are set, they're MANDATORY — anything not signaling
-    # the buyer intent isn't a useful lead, even if role/tech happen to match.
-    if intent_keywords:
-        return any(_word_in(kw, full_blob) for kw in intent_keywords if kw)
     return (
         any(_word_in(role, position) for role in target_roles)
         or any(_word_in(kw, tags_str) for kw in tech_keywords)
+        or any(_word_in(kw, full_blob) for kw in intent_keywords if kw)
     )
+
+
+def _has_intent_match(job: dict, intent_keywords: list[str]) -> bool:
+    if not intent_keywords:
+        return False
+    blob = f"{job.get('position','')} {job.get('description','')} {' '.join(job.get('tags',[]) or [])}".lower()
+    return any(kw.lower() in blob for kw in intent_keywords if kw)
 
 
 def _domain_of(url: str | None) -> str | None:
@@ -87,6 +93,9 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
         job_url = job.get("url", "")
         position = job.get("position", "")
         tags = job.get("tags", [])
+        signals = ["actively_hiring", "hiring_remote"]
+        if _has_intent_match(job, intent_keywords):
+            signals.insert(0, "intent_match")
         leads.append({
             "external_id": f"remoteok_{job.get('id', company)}",
             "person_name": company,
@@ -104,7 +113,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                 "tags": tags,
                 "salary": job.get("salary", ""),
             },
-            "intent_signals": ["actively_hiring", "hiring_remote"],
+            "intent_signals": signals,
         })
         if len(leads) >= limit:
             break

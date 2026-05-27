@@ -180,10 +180,11 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             one_liner = hit.get("one_liner", "")
             batch = hit.get("batch", "")
 
-            # STRICT intent filter — skip companies whose name + one_liner don't
-            # mention any of the buyer-intent keywords. (No-op if intent_keywords empty.)
-            if not _matches_intent(f"{company_name} {one_liner}", intent_keywords):
-                continue
+            # Intent boost (NOT a filter) — companies whose one_liner mentions
+            # buyer-intent keywords get a higher score from the scorer. We still
+            # surface industry-matching companies so user can decide.
+            intent_match = _matches_intent(f"{company_name} {one_liner}", intent_keywords)
+            extra_signals = ["intent_in_one_liner"] if intent_match and intent_keywords else []
 
             yc_page = f"https://www.ycombinator.com/companies/{slug}"
             snippet_base = f"YC {batch} — {company_name}\n\n{one_liner}"
@@ -201,7 +202,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                     "source_url": yc_page,
                     "source_profile_url": yc_page,
                     "source_snippet": snippet_base,
-                    "intent_signals": ["yc_company"],
+                    "intent_signals": ["yc_company"] + extra_signals,
                     "raw_data": {
                         "context": f"YC {batch} company: {one_liner}",
                         "yc_url": yc_page,
@@ -217,7 +218,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                         "source_url": yc_page,
                         "source_profile_url": founder.get("person_linkedin_url") or yc_page,
                         "source_snippet": f"{snippet_base}\n\nFounder: {founder.get('person_name')}",
-                        "intent_signals": ["yc_founder"],
+                        "intent_signals": ["yc_founder"] + extra_signals,
                         "raw_data": {
                             "context": f"YC {batch} founder of {company_name}: {one_liner}",
                             "yc_url": yc_page,

@@ -53,13 +53,13 @@ def score_lead(lead: dict, strategy) -> dict:
     if intent_keywords:
         intent_block = f"""
 
-⚠️ CRITICAL — BUYER INTENT FILTER:
-The strategy looks for people whose content shows ANY of these intent signals:
+BUYER INTENT KEYWORDS (boost matching, don't auto-reject):
+The strategy looks for buyer signals like:
 {intent_keywords}
 
-The lead is ONLY useful if their bio / post / company description SHOWS that intent.
-- Industry+role match but NO intent signal in content → max 0.3.
-- Use the WORDS the person actually wrote, not assumptions about their role."""
+- If the content clearly shows ANY of these (or close synonym) → boost to 0.75-1.0.
+- If just industry/role match but NO intent signal → cap around 0.5 (still passable, sorts lower).
+- Use the WORDS the person actually wrote, don't assume from their role."""
 
     prompt = f"""Score this person 0.0-1.0 as a potential customer AND extract proof.
 
@@ -95,9 +95,10 @@ Return ONLY JSON. Be RIGOROUS — never make up phrases not in the content.
 
 RULES:
 - matched_phrases MUST be verbatim substrings of the content above. Up to 3. Empty list if nothing matches.
-- Score 0.8-1.0 only if you can quote phrases that clearly show buyer intent.
-- Score 0.5-0.7 if there's industry/role match plus weak intent signal.
-- Score 0.0-0.3 if it's just generic industry match with no intent."""
+- Score 0.8-1.0 if you can quote phrases showing CLEAR buyer intent.
+- Score 0.5-0.7 if there's solid industry/role match, even without explicit intent.
+- Score 0.3-0.5 if content is sparse but industry hints align.
+- Score 0.0-0.2 only when clearly off-topic / wrong industry."""
 
     try:
         result = llm_json(prompt, high_quality=False, max_tokens=400)
