@@ -125,8 +125,8 @@ export default function LeadsPage() {
     <div className="flex h-full">
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Toolbar */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-white shrink-0">
-          <div className="relative flex-1 max-w-sm">
+        <div className="flex items-center flex-wrap gap-3 px-6 py-4 border-b border-gray-200 bg-white shrink-0">
+          <div className="relative max-w-xs flex-shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
@@ -157,8 +157,9 @@ export default function LeadsPage() {
           </select>
 
           <select
-            className="input-field w-auto text-sm"
+            className="input-field text-sm truncate min-w-[140px] max-w-[200px]"
             value={filters.strategy_id ?? ''}
+            title={strategies.find((s) => s.id === filters.strategy_id)?.title || 'All strategies'}
             onChange={(e) => setFilters((f) => ({
               ...f,
               strategy_id: e.target.value ? Number(e.target.value) : undefined,
@@ -166,7 +167,9 @@ export default function LeadsPage() {
           >
             <option value="">All strategies</option>
             {strategies.map((s) => (
-              <option key={s.id} value={s.id}>{s.title}</option>
+              <option key={s.id} value={s.id}>
+                {s.title.length > 30 ? s.title.slice(0, 30) + '…' : s.title}
+              </option>
             ))}
           </select>
 
@@ -181,7 +184,7 @@ export default function LeadsPage() {
             <option value="rejected">Rejected</option>
           </select>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 whitespace-nowrap">
             <span className="text-xs text-gray-500">Min score</span>
             <input
               type="range"
@@ -200,8 +203,8 @@ export default function LeadsPage() {
             </span>
           </div>
 
-          <div className="ml-auto flex items-center gap-3">
-            <span className="text-sm text-gray-500">
+          <div className="ml-auto flex items-center gap-3 flex-wrap">
+            <span className="text-sm text-gray-500 whitespace-nowrap">
               {leads.length} leads
               {leads.length > 0 && (() => {
                 const withEmail = leads.filter((l) => l.person_email).length
