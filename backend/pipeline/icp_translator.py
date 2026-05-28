@@ -41,6 +41,14 @@ Extract:
    * "sells to recently-funded startups" → ["just raised", "seed round", "series a", "fundraising", "announcing our funding"]
    * "sells KYC automation" → ["kyc", "compliance burden", "manual onboarding", "regulatory headache"]
 
+- `buyer_phrases`: THE MOST IMPORTANT FIELD. 10-15 realistic phrases a prospect would actually TYPE/POST online when they need what we offer. These are how we find people EXPRESSING the need — not just industry matches. Write them as natural search/forum language, first-person where natural.
+
+  Examples for "we sell website load-testing tools":
+   ["looking for a load testing tool", "how do I simulate website traffic", "recommendations for stress testing my site", "best tool to test server under load", "my site crashes under traffic help", "alternatives to loadrunner", "anyone use a good performance testing service"]
+
+  Examples for "we help R&B/Hip-hop radio hosts find sponsors":
+   ["looking for sponsors for my podcast", "how to get brand deals for my radio show", "where to find music sponsorship", "brands that sponsor hip hop content", "need a sponsor for my show", "how do indie radio hosts get sponsorships"]
+
 - `tech_keywords`, `github_topics`, `github_user_queries`, `hn_queries`, `google_search_patterns`, `twitter_bio_keywords`, `indeed_job_queries`: as before
 - `exclude_keywords`: terms that mean the result is irrelevant (course, tutorial, intern, student, etc.)
 
@@ -49,6 +57,7 @@ Return ONLY valid JSON (no markdown):
   "industries": ["..."],
   "target_roles": ["..."],
   "buyer_intent_keywords": ["...", "..."],
+  "buyer_phrases": ["looking for ...", "how do I ...", "recommendations for ...", "..."],
   "company_size_min": 10,
   "company_size_max": 5000,
   "tech_keywords": ["..."],
@@ -64,15 +73,21 @@ Return ONLY valid JSON (no markdown):
 }}"""
 
     try:
-        parsed = llm_json(prompt, high_quality=True, max_tokens=1400)
+        parsed = llm_json(prompt, high_quality=True, max_tokens=1600)
         # Carry the raw strategy text into raw_icp_params so sources (esp. the
         # general web-search extractor) can use it without the strategy object.
         parsed["_main_problem"] = strategy.main_problem
         parsed["_ideal_customer"] = strategy.ideal_customer
+        # Merge any user-entered buyer phrases with the LLM-generated ones (user first)
+        user_phrases = list(strategy.buyer_phrases or [])
+        gen_phrases = list(parsed.get("buyer_phrases", []) or [])
+        merged = list(dict.fromkeys([p for p in (user_phrases + gen_phrases) if p and p.strip()]))
+        parsed["buyer_phrases"] = merged
         strategy.target_industries = parsed.get("industries", [])
         strategy.target_roles = parsed.get("target_roles", [])
         strategy.raw_icp_params = parsed
         db.commit()
+        log.info(f"ICP for strategy {strategy.id}: {len(merged)} buyer phrases generated")
         log.info(
             f"ICP translated for strategy {strategy.id}: "
             f"{len(strategy.target_roles)} roles, {len(strategy.target_industries)} industries, "

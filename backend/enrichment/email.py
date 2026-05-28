@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 import re
 import smtplib
+from urllib.parse import urlparse
 
 import dns.resolver
 import httpx
+from selectolax.parser import HTMLParser
 
 from backend.enrichment.extractors import extract_emails_from_text, scrape_company_emails
 
@@ -142,6 +144,51 @@ def _pick_personal_email(emails: list[str], name: str | None) -> str | None:
     return emails[0]
 
 
+_MOJEEK_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+)
+
+
+def find_linkedin_url(name: str, company: str | None = None, title: str | None = None) -> str | None:
+    """Search Mojeek for the person's LinkedIn /in/ profile URL.
+
+    Uses name + company (or title as fallback) to narrow results.
+    Returns the first valid linkedin.com/in/ URL found, or None.
+    """
+    if not name or len(name.split()) < 2:
+        return None
+    query = f'site:linkedin.com/in "{name}"'
+    if company:
+        query += f' "{company}"'
+    elif title:
+        query += f' "{title}"'
+    try:
+        r = httpx.get(
+            "https://www.mojeek.com/search",
+            params={"q": query},
+            headers={"User-Agent": _MOJEEK_UA, "Accept": "text/html"},
+            timeout=10,
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return None
+        tree = HTMLParser(r.text)
+        for a in tree.css(".results-standard a, .results a"):
+            href = (a.attributes.get("href") or "").strip()
+            if not href:
+                continue
+            try:
+                p = urlparse(href)
+                if "linkedin.com" in p.netloc and p.path.startswith("/in/"):
+                    return href
+            except Exception:
+                continue
+    except Exception as e:
+        log.debug(f"LinkedIn URL lookup failed for {name!r}: {e}")
+    return None
+
+
 def enrich_lead(lead_draft: dict) -> dict:
     """Layered email discovery. Each path is short-circuit, ordered by signal strength:
       1. Email already on the lead (from source extraction) — verify if possible
@@ -215,6 +262,17 @@ def enrich_lead(lead_draft: dict) -> dict:
             lead_draft["person_email"] = guess
             lead_draft["email_verified"] = False
             lead_draft["email_source"] = "pattern_guess"
-            return lead_draft
+
+    # ── 6. LinkedIn URL — find profile for every lead that doesn't already have one
+    #       Skip if we already have it (e.g. linkedin source sets it directly)
+    if not lead_draft.get("person_linkedin_url") and name and len(name.split()) >= 2:
+        li_url = find_linkedin_url(
+            name,
+            lead_draft.get("company_name"),
+            lead_draft.get("person_title"),
+        )
+        if li_url:
+            lead_draft["person_linkedin_url"] = li_url
+            log.debug(f"LinkedIn URL enriched for {name!r}: {li_url}")
 
     return lead_draft

@@ -174,9 +174,11 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
         if not strategy:
             return {**summary, "error": "strategy not found"}
 
-        modules = sources_pkg.BASE_SOURCES
+        # Default to INTENT sources (where people POST buying intent). The full
+        # BASE_SOURCES set is only used when explicitly requested by name.
+        modules = sources_pkg.INTENT_SOURCES
         if source_names:
-            modules = [m for m in modules if m.NAME in source_names]
+            modules = [m for m in sources_pkg.BASE_SOURCES if m.NAME in source_names]
 
         for source_module in modules:
             run = SyncRun(strategy_id=strategy.id, source=source_module.NAME, status="running", started_at=now())
@@ -267,7 +269,7 @@ def hourly_sync() -> None:
         log.info(f"Hourly sync: processing {len(strategies)} active strategies")
 
         for strategy in strategies:
-            for source_module in sources_pkg.BASE_SOURCES:
+            for source_module in sources_pkg.INTENT_SOURCES:
                 run = SyncRun(
                     strategy_id=strategy.id,
                     source=source_module.NAME,

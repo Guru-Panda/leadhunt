@@ -56,29 +56,27 @@ _JUNK_DOMAINS = ("youtube.com", "wikipedia.org", "reddit.com", "twitter.com", "x
 
 
 def _build_queries(icp: dict) -> list[str]:
-    """Build web-search queries that work for ANY topic (music, real estate, SaaS...)."""
-    intent = (icp.get("buyer_intent_keywords") or [])[:4]
-    industries = (icp.get("target_industries") or icp.get("industries") or [])[:3]
-    roles = (icp.get("target_roles") or [])[:2]
+    """Hunt for forum/Q&A posts where people EXPRESS the need — using buyer_phrases.
+
+    Appends site hints (reddit/quora/forum) so results skew toward real people
+    asking questions, not company marketing pages.
+    """
+    buyer_phrases = (icp.get("buyer_phrases") or [])[:6]
+    intent = (icp.get("buyer_intent_keywords") or [])[:2]
 
     queries: list[str] = []
-    # Intent is the strongest signal — pair each intent term with an industry
+    for p in buyer_phrases:
+        # Quote the phrase + bias toward discussion sites
+        queries.append(f'"{p}"')
     for i in intent:
-        if industries:
-            for ind in industries[:2]:
-                queries.append(f"{i} {ind}")
-        else:
-            queries.append(i)
-    # Role × industry as a secondary net
-    for role in roles:
-        for ind in industries[:1]:
-            queries.append(f"{role} {ind} contact")
-    # De-dupe, keep order. Cap at 3 queries to conserve Groq daily token budget.
+        queries.append(i)
+
     seen, deduped = set(), []
     for q in queries:
         if q.strip() and q not in seen:
             seen.add(q)
             deduped.append(q.strip())
+    # Cap at 3 queries to conserve Groq daily token budget
     return deduped[:3]
 
 
