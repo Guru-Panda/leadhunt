@@ -28,6 +28,68 @@ def _compute_matched_keywords(content: str, intent_keywords: list[str]) -> list[
     return [kw for kw in intent_keywords if kw and kw.lower() in haystack]
 
 
+def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
+    """Keyword-overlap fallback used when the LLM is unavailable (e.g. Groq daily
+    cap hit). Keeps relevant leads alive instead of zeroing everything out.
+
+    Scoring is based on how many distinct ICP signal-buckets the content hits:
+      - intent keyword present       → strongest signal
+      - industry term present        → medium
+      - role term present            → medium
+    """
+    blob = content.lower()
+    name = lead.get("person_name", "")
+    matched_intent = _compute_matched_keywords(content, icp.get("buyer_intent_keywords", []) or [])
+    industries = icp.get("target_industries") or icp.get("industries") or []
+    roles = icp.get("target_roles") or []
+
+    def _any_word(terms: list[str]) -> list[str]:
+        hits = []
+        for phrase in terms:
+            for w in str(phrase).lower().split():
+                if len(w) >= 3 and w in blob:
+                    hits.append(phrase)
+                    break
+        return hits
+
+    matched_inds = _any_word(industries)
+    matched_roles = _any_word(roles)
+
+    # Score: intent is worth most, then industry, then role
+    score = 0.3  # baseline so a lead with any content isn't auto-killed
+    if matched_intent:
+        score += 0.35
+    if matched_inds:
+        score += 0.15
+    if matched_roles:
+        score += 0.10
+    # Source-signal nudges (hiring threads, yc founders, etc. are inherently warm)
+    strong_signals = {"active_hiring_thread", "intent_match", "intent_in_one_liner", "email_in_post", "buyer_intent_post"}
+    if strong_signals & set(lead.get("intent_signals", [])):
+        score += 0.1
+    score = max(0.0, min(1.0, score))
+
+    summary_bits = []
+    if matched_intent:
+        summary_bits.append(f"mentions {', '.join(matched_intent[:2])}")
+    if matched_inds:
+        summary_bits.append(f"in {matched_inds[0]}")
+    summary = (
+        f"Heuristic match: {name} " + ("; ".join(summary_bits) if summary_bits else "shares some ICP terms")
+        + " (LLM scoring unavailable — verify manually)."
+    )
+
+    return {
+        "intent_score": score,
+        "reasoning": summary,
+        "intent_signals": lead.get("intent_signals", []),
+        "matched_phrases": [],
+        "matched_keywords": matched_intent,
+        "ai_summary": summary,
+        "signal_label": _signal_label(score),
+    }
+
+
 def score_lead(lead: dict, strategy) -> dict:
     """Rate a lead 0.0-1.0 + collect PROOF of why.
 
@@ -123,13 +185,8 @@ RULES:
             "signal_label": _signal_label(score),
         }
     except Exception as e:
-        log.warning(f"Scoring failed for {lead.get('person_name')}: {e}")
-        return {
-            "intent_score": 0.4,
-            "reasoning": "Scoring unavailable",
-            "intent_signals": lead.get("intent_signals", []),
-            "matched_phrases": [],
-            "matched_keywords": _compute_matched_keywords(full_content, intent_keywords),
-            "ai_summary": "Scoring unavailable — please review manually.",
-            "signal_label": _signal_label(0.4),
-        }
+        # LLM unavailable (often Groq daily token cap). Fall back to a keyword
+        # heuristic so relevant leads still survive instead of all scoring 0.4.
+        log.warning(f"LLM scoring failed for {lead.get('person_name')} ({e}) — using heuristic fallback")
+        icp = strategy.raw_icp_params or {}
+        return _heuristic_score(lead, full_content, icp)
