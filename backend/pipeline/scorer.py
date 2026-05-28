@@ -40,9 +40,10 @@ def score_lead(lead: dict, strategy) -> dict:
       - ai_summary: str (1-sentence "why this person is a buyer")
       - signal_label: str ("Strong buying signal" / etc., derived from score)
     """
-    bio = str((lead.get("raw_data") or {}).get("bio", ""))[:600]
-    context = str((lead.get("raw_data") or {}).get("context", ""))[:300]
-    snippet = str(lead.get("source_snippet") or "")[:600]
+    # Trimmed windows to conserve Groq daily token budget
+    bio = str((lead.get("raw_data") or {}).get("bio", ""))[:350]
+    context = str((lead.get("raw_data") or {}).get("context", ""))[:200]
+    snippet = str(lead.get("source_snippet") or "")[:350]
     full_content = f"{bio}\n{context}\n{snippet}".strip()
 
     intent_keywords = []
@@ -77,7 +78,7 @@ THIS PERSON:
 - Existing intent signals: {lead.get('intent_signals', [])}
 - Content (bio + context + snippet):
 \"\"\"
-{full_content[:1800]}
+{full_content[:900]}
 \"\"\"
 
 Return ONLY JSON. Be RIGOROUS — never make up phrases not in the content.

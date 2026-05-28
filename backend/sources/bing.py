@@ -1,157 +1,172 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
+from urllib.parse import urlparse
 
 import httpx
 from selectolax.parser import HTMLParser
 
+from backend.llm import llm_json
+
 log = logging.getLogger(__name__)
-NAME = "bing"  # name kept for backward DB compat; engine is Mojeek
+NAME = "bing"  # kept for DB/badge compat; engine is Mojeek + LLM extraction
 
 _MOJEEK = "https://www.mojeek.com/search"
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
 
-def _mojeek_search(query: str, limit: int = 10) -> list[dict]:
-    """Mojeek doesn't bot-block and returns server-rendered HTML."""
+def _mojeek_search(query: str, limit: int = 12) -> list[dict]:
+    """Mojeek returns server-rendered HTML and doesn't bot-block."""
     try:
-        r = httpx.get(
-            _MOJEEK,
-            params={"q": query},
-            headers={"User-Agent": _UA, "Accept": "text/html"},
-            timeout=12,
-            follow_redirects=True,
-        )
+        r = httpx.get(_MOJEEK, params={"q": query}, headers={"User-Agent": _UA, "Accept": "text/html"},
+                      timeout=12, follow_redirects=True)
         if r.status_code != 200:
             return []
         tree = HTMLParser(r.text)
-        results: list[dict] = []
-        for li in tree.css(".results-standard li"):
+        out: list[dict] = []
+        for li in tree.css(".results-standard li, ul.results-standard li, .results li"):
             a = li.css_first("a.title, h2 a, a")
             snip = li.css_first(".s, p")
-            url_el = li.css_first(".ob a")
             if not a:
                 continue
-            href = a.attributes.get("href", "")
-            title = a.text(strip=True)
-            description = snip.text(strip=True) if snip else ""
-            results.append({"title": title, "url": href, "snippet": description})
-            if len(results) >= limit:
+            out.append({
+                "title": a.text(strip=True),
+                "url": a.attributes.get("href", ""),
+                "snippet": snip.text(strip=True) if snip else "",
+            })
+            if len(out) >= limit:
                 break
-        return results
+        return out
     except Exception as e:
         log.warning(f"Mojeek search failed for {query!r}: {e}")
         return []
 
 
-_BAD_NAME_WORDS = {
-    "the", "how", "what", "why", "when", "best", "top", "guide", "tips",
-    "compensation", "startup", "founders", "founder", "ceo", "cto",
-    "fintech", "payments", "build", "building", "becoming", "remote",
-}
-
-
-def _looks_like_person(title: str, snippet: str) -> tuple[str | None, str | None]:
-    """Conservatively extract a person name + title from a search result.
-
-    Mojeek mostly returns articles/blogs, not personal sites. We only flag a
-    result as 'a person' if the title starts with a clean 2-3 word name followed
-    by ' - Title at Company' — and even then, reject obvious article phrases.
-    """
-    # Strict pattern: must be Firstname Lastname [- or |] Title
-    m = re.match(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*[-–|]\s*(.{5,80})", title)
-    if not m:
-        return None, None
-    name = m.group(1).strip()
-    role_text = m.group(2).strip()
-    # Reject when any word looks like article noise
-    words_lower = {w.lower() for w in name.split()}
-    if words_lower & _BAD_NAME_WORDS:
-        return None, None
-    # Reject obviously generic role text (article titles)
-    if any(noise in role_text.lower() for noise in ("how to", "what is", "guide", "best ", "top ")):
-        return None, None
-    return name, role_text[:80]
-
-
 def _domain_of(url: str) -> str | None:
     try:
-        from urllib.parse import urlparse
         host = urlparse(url).netloc
         return host[4:] if host.startswith("www.") else host or None
     except Exception:
         return None
 
 
-def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
-    """Search the open web (via Mojeek) for content matching the ICP.
+_JUNK_DOMAINS = ("youtube.com", "wikipedia.org", "reddit.com", "twitter.com", "x.com",
+                 "facebook.com", "instagram.com", "tiktok.com", "pinterest.com", "amazon.")
 
-    Returns leads built from search results — people mentioned in blog posts,
-    company about pages, podcast interviews, etc. Skips obvious junk
-    (course/tutorial pages, generic articles).
-    """
-    # Build queries from the ICP — prefer role + industry combos
-    roles = (icp_params.get("target_roles") or [])[:2]
-    industries = (icp_params.get("target_industries") or [])[:2]
-    intent_keywords = (icp_params.get("buyer_intent_keywords") or [])[:3]
-    exclude = " ".join(f"-{w}" for w in (icp_params.get("exclude_keywords") or [])[:4])
+
+def _build_queries(icp: dict) -> list[str]:
+    """Build web-search queries that work for ANY topic (music, real estate, SaaS...)."""
+    intent = (icp.get("buyer_intent_keywords") or [])[:4]
+    industries = (icp.get("target_industries") or icp.get("industries") or [])[:3]
+    roles = (icp.get("target_roles") or [])[:2]
 
     queries: list[str] = []
-    # Intent-driven queries get priority — they target the actual buyer signal
-    for intent in intent_keywords:
-        for industry in industries:
-            queries.append(f'"{intent}" "{industry}" {exclude}'.strip())
-    # Role × industry as fallback
+    # Intent is the strongest signal — pair each intent term with an industry
+    for i in intent:
+        if industries:
+            for ind in industries[:2]:
+                queries.append(f"{i} {ind}")
+        else:
+            queries.append(i)
+    # Role × industry as a secondary net
     for role in roles:
-        for industry in industries:
-            queries.append(f'"{role}" "{industry}" {exclude}'.strip())
-    # Last-ditch fallback
+        for ind in industries[:1]:
+            queries.append(f"{role} {ind} contact")
+    # De-dupe, keep order. Cap at 3 queries to conserve Groq daily token budget.
+    seen, deduped = set(), []
+    for q in queries:
+        if q.strip() and q not in seen:
+            seen.add(q)
+            deduped.append(q.strip())
+    return deduped[:3]
+
+
+def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
+    """General-purpose web lead finder: Mojeek search + LLM extraction.
+
+    Works for ANY topic because it just reads search results and asks the LLM
+    'who in here matches our ICP?' — no hardcoded industry assumptions.
+    """
+    queries = _build_queries(icp_params)
     if not queries:
-        for industry in industries:
-            queries.append(f'{industry} startup founder')
+        return []
+
+    main_problem = icp_params.get("_main_problem", "")
+    ideal_customer = icp_params.get("_ideal_customer", "")
+    intent = icp_params.get("buyer_intent_keywords", [])
 
     leads: list[dict] = []
-    seen_urls: set[str] = set()
+    seen: set[str] = set()
 
-    for query in queries[:3]:
-        results = _mojeek_search(query, limit=10)
-        for r in results:
-            url = r.get("url", "")
-            if not url or url in seen_urls:
+    for query in queries:
+        results = _mojeek_search(query, limit=12)
+        # Filter out social/junk domains before sending to LLM
+        results = [r for r in results if r.get("url") and not any(j in (_domain_of(r["url"]) or "") for j in _JUNK_DOMAINS)]
+        if not results:
+            time.sleep(1)
+            continue
+
+        # Hand the search results to the LLM for extraction
+        results_block = "\n".join(
+            f"{i+1}. {r['title']}\n   URL: {r['url']}\n   {r['snippet'][:200]}"
+            for i, r in enumerate(results[:10])
+        )
+        prompt = f"""You are a lead researcher. From the web-search results below, extract PEOPLE or COMPANIES that match this customer profile.
+
+WHO WE'RE LOOKING FOR:
+- Our goal: {main_problem or query}
+- Ideal customer: {ideal_customer or 'see goal'}
+- Buyer signals: {intent}
+
+SEARCH RESULTS (query: "{query}"):
+{results_block}
+
+Extract up to 8 real leads. ONLY include results that genuinely match — skip generic articles, listicles, "how to" guides, and directories with no specific named entity.
+
+Return ONLY JSON list (empty list if nothing matches):
+[
+  {{
+    "person_name": "Full name OR company name if no person",
+    "person_title": "role/title or null",
+    "company_name": "company or null",
+    "url": "the result URL this came from",
+    "why_fit": "one sentence — what in the result shows they match our buyer signal"
+  }}
+]"""
+        try:
+            extracted = llm_json(prompt, high_quality=False, max_tokens=1200)
+            if not isinstance(extracted, list):
                 continue
-            seen_urls.add(url)
+        except Exception as e:
+            log.warning(f"Web-search LLM extract failed for {query!r}: {e}")
+            continue
 
-            # Skip pages we know are noise
-            domain = _domain_of(url) or ""
-            if any(b in domain for b in ("youtube.com", "wikipedia.org", "reddit.com", "twitter.com")):
+        for item in extracted:
+            if not isinstance(item, dict):
                 continue
-
-            title = r.get("title", "")
-            snippet = r.get("snippet", "")
-            name, role_text = _looks_like_person(title, snippet)
-
-            # Only keep results that look like they're about a real person
-            if not name:
+            name = (item.get("person_name") or "").strip()
+            url = (item.get("url") or "").strip()
+            if not name or not url or url in seen:
                 continue
-
+            seen.add(url)
+            domain = _domain_of(url)
             leads.append({
-                "external_id": f"bing_{url[:80]}",
+                "external_id": f"web_{url[:90]}",
                 "person_name": name,
-                "person_title": role_text,
-                "company_name": None,  # the LLM scorer will decide if this is useful
-                "company_domain": domain or None,
+                "person_title": item.get("person_title"),
+                "company_name": item.get("company_name"),
+                "company_domain": domain,
                 "source": NAME,
                 "source_url": url,
                 "source_profile_url": url,
-                "source_snippet": f"Web search: {query}\n\n{title}\n{snippet[:500]}",
+                "source_snippet": f"Web search '{query}': {item.get('why_fit', '')}",
                 "raw_data": {
-                    "context": snippet[:500],
-                    "search_url": url,
+                    "context": item.get("why_fit", ""),
                     "search_query": query,
+                    "search_url": url,
                 },
-                "intent_signals": ["mentioned_in_web_search"],
+                "intent_signals": ["found_via_web_search"],
             })
             if len(leads) >= limit:
                 return leads[:limit]

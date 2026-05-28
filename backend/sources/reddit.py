@@ -35,18 +35,29 @@ def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
 
 
 def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
-    # Intent-keywords first — these are the buyer signals ("looking for sponsors", "we sponsor")
+    # Reddit searches ALL of Reddit — works for any topic (music, real estate, SaaS...).
     intent_keywords = icp_params.get("buyer_intent_keywords") or []
     queries = icp_params.get("hn_queries") or []
-    industries = icp_params.get("industries") or []
+    industries = icp_params.get("target_industries") or icp_params.get("industries") or []
 
-    # Build queries: intent + intent×industry pairs, then fall back to generic
+    # Build queries: intent + intent×industry pairs
     intent_queries: list[str] = []
     for ikw in intent_keywords[:3]:
         intent_queries.append(ikw)
         for ind in industries[:2]:
             intent_queries.append(f"{ikw} {ind}")
-    all_queries = intent_queries[:5] + queries[:3]
+
+    # Also derive a couple of keyphrases straight from the raw strategy text —
+    # catches topics the structured fields miss (e.g. "R&B hip hop sponsorship").
+    raw_text = f"{icp_params.get('_main_problem','')} {icp_params.get('_ideal_customer','')}".strip()
+    topic_query = " ".join(industries[:2]) if industries else ""
+    if topic_query:
+        intent_queries.append(topic_query)
+
+    all_queries = list(dict.fromkeys(intent_queries[:5] + queries[:3]))
+    # Last-ditch: if literally nothing, search the raw industries/text
+    if not all_queries and raw_text:
+        all_queries = [raw_text[:80]]
     if not all_queries:
         return []
 

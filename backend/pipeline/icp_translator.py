@@ -65,6 +65,10 @@ Return ONLY valid JSON (no markdown):
 
     try:
         parsed = llm_json(prompt, high_quality=True, max_tokens=1400)
+        # Carry the raw strategy text into raw_icp_params so sources (esp. the
+        # general web-search extractor) can use it without the strategy object.
+        parsed["_main_problem"] = strategy.main_problem
+        parsed["_ideal_customer"] = strategy.ideal_customer
         strategy.target_industries = parsed.get("industries", [])
         strategy.target_roles = parsed.get("target_roles", [])
         strategy.raw_icp_params = parsed

@@ -97,6 +97,8 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
         raw.setdefault("source_profile_url", raw.get("person_linkedin_url") or url)
         if not raw.get("source_snippet") and raw.get("context"):
             raw["source_snippet"] = f"Found on {ds.name}\n{url}\n\n{raw['context']}"
+        if not cheap_relevance(raw, strategy.raw_icp_params):
+            continue
         enriched = enrich_lead(raw)
         scored = score_lead(enriched, strategy)
         if scored["intent_score"] >= strategy.intent_threshold:
@@ -121,6 +123,37 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
 
 def is_first_run_of_week() -> bool:
     return datetime.now(timezone.utc).weekday() == 0 and datetime.now(timezone.utc).hour < 2
+
+
+def cheap_relevance(raw: dict, icp: dict) -> bool:
+    """Free heuristic — does this lead share ANY signal with the ICP?
+
+    Skips the expensive LLM scoring call for obviously-irrelevant leads,
+    conserving the Groq daily token budget. Returns True if worth LLM-scoring.
+    """
+    if not icp:
+        return True  # no ICP params yet — let it through
+    # Build the lead's text blob
+    rd = raw.get("raw_data") or {}
+    blob = " ".join(str(x) for x in [
+        raw.get("person_name", ""), raw.get("person_title", ""),
+        raw.get("company_name", ""), raw.get("source_snippet", ""),
+        rd.get("bio", ""), rd.get("context", ""),
+    ]).lower()
+    if not blob.strip():
+        return True  # no content to judge — let the LLM decide
+
+    # Collect ICP signal terms (single words ≥3 chars)
+    terms: set[str] = set()
+    for key in ("buyer_intent_keywords", "target_industries", "industries", "target_roles", "tech_keywords"):
+        for phrase in (icp.get(key) or []):
+            for w in str(phrase).lower().split():
+                if len(w) >= 3:
+                    terms.add(w)
+    if not terms:
+        return True
+    # Relevant if the lead's blob contains at least one ICP term
+    return any(t in blob for t in terms)
 
 
 def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_source_limit: int = 30) -> dict:
@@ -155,6 +188,9 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
                 for raw in raw_leads:
                     if dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", "")):
                         continue
+                    # Cheap pre-filter — skip LLM scoring for irrelevant leads (saves tokens)
+                    if not cheap_relevance(raw, strategy.raw_icp_params):
+                        continue
                     enriched = enrich_lead(raw)
                     scored = score_lead(enriched, strategy)
                     if scored["intent_score"] >= strategy.intent_threshold:
@@ -172,6 +208,48 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
             finally:
                 run.finished_at = now()
                 db.commit()
+
+        # ── Run discovered sources too (they're often the ONLY relevant sources
+        # for non-tech ICPs). And if none exist yet, kick off discovery so the
+        # next sync has niche sources to scrape.
+        try:
+            discovered = (
+                db.query(DiscoveredSource)
+                .filter(DiscoveredSource.strategy_id == strategy.id, DiscoveredSource.status == "active")
+                .order_by(DiscoveredSource.success_rate.desc())
+                .limit(15)
+                .all()
+            )
+            if not discovered:
+                log.info(f"[sync_strategy] no discovered sources for strategy {strategy.id} — running discovery")
+                from backend.pipeline.discoverer import discover_sources_for_strategy
+                try:
+                    discover_sources_for_strategy(strategy, db)
+                    discovered = (
+                        db.query(DiscoveredSource)
+                        .filter(DiscoveredSource.strategy_id == strategy.id, DiscoveredSource.status == "active")
+                        .limit(15).all()
+                    )
+                except Exception as e:
+                    log.warning(f"[sync_strategy] discovery failed: {e}")
+
+            for ds in discovered:
+                run = SyncRun(strategy_id=strategy.id, source=f"discovered:{ds.name}", status="running", started_at=now())
+                db.add(run); db.commit()
+                try:
+                    before = ds.leads_found_total
+                    _run_discovered_source(ds, strategy, db)
+                    run.leads_found = max(0, ds.leads_found_total - before)
+                    run.status = "ok"
+                    summary["sources"][f"discovered:{ds.name}"] = {"status": "ok", "saved": run.leads_found}
+                except Exception as e:
+                    run.status = "error"; run.error = str(e)
+                    log.error(f"[sync_strategy] discovered:{ds.name} failed: {e}")
+                finally:
+                    run.finished_at = now(); db.commit()
+        except Exception as e:
+            log.error(f"[sync_strategy] discovered-source pass failed: {e}")
+
         return summary
     finally:
         db.close()
