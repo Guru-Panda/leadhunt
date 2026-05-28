@@ -90,6 +90,13 @@ def health():
     return {"status": "ok", "service": "leadhunt-api"}
 
 
+@app.get("/system/llm-status")
+def system_llm_status():
+    """Reports whether AI scoring is currently degraded (Groq rate-limited)."""
+    from backend.llm import llm_status
+    return llm_status()
+
+
 @app.get("/")
 def root():
     return {"service": "LeadHunt API", "docs": "/docs"}

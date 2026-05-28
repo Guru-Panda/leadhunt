@@ -2,6 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { Target, Users, Activity, BarChart2, LogOut, Crosshair, User as UserIcon } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import OnboardingModal from './OnboardingModal'
+import LlmStatusBanner from './LlmStatusBanner'
 import clsx from 'clsx'
 
 const NAV = [
@@ -86,8 +87,11 @@ export default function Layout() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-y-auto">
-        <Outlet />
+      <main className="flex-1 overflow-y-auto flex flex-col">
+        <LlmStatusBanner />
+        <div className="flex-1">
+          <Outlet />
+        </div>
       </main>
 
       {/* First-login onboarding nudge */}
