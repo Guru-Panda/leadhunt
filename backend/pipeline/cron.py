@@ -100,6 +100,8 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
         if not cheap_relevance(raw, strategy.raw_icp_params):
             continue
         enriched = enrich_lead(raw)
+        if not has_contact(enriched):
+            continue
         scored = score_lead(enriched, strategy)
         if scored["intent_score"] >= strategy.intent_threshold:
             save_lead(db, strategy, f"discovered:{ds.name}", enriched, scored)
@@ -123,6 +125,26 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
 
 def is_first_run_of_week() -> bool:
     return datetime.now(timezone.utc).weekday() == 0 and datetime.now(timezone.utc).hour < 2
+
+
+def has_contact(enriched: dict) -> bool:
+    """Return True if the lead has at least one way to reach them.
+
+    Required to save a lead — prevents useless nameless rows with no outreach path.
+    Accepted contact fields (any one is enough):
+      - person_email
+      - person_linkedin_url
+      - person_github_url
+      - person_twitter_url
+      - source_profile_url  (platform profile: Reddit /u/, HN user, SO user, etc.)
+    """
+    return bool(
+        enriched.get("person_email")
+        or enriched.get("person_linkedin_url")
+        or enriched.get("person_github_url")
+        or enriched.get("person_twitter_url")
+        or enriched.get("source_profile_url")
+    )
 
 
 def cheap_relevance(raw: dict, icp: dict) -> bool:
@@ -174,11 +196,22 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
         if not strategy:
             return {**summary, "error": "strategy not found"}
 
-        # Default to INTENT sources (where people POST buying intent). The full
-        # BASE_SOURCES set is only used when explicitly requested by name.
-        modules = sources_pkg.INTENT_SOURCES
+        # Source selection priority:
+        # 1. Explicit override (source_names param from API call)
+        # 2. Per-strategy recommended_sources from ICP translator
+        # 3. Global INTENT_SOURCES fallback
         if source_names:
             modules = [m for m in sources_pkg.BASE_SOURCES if m.NAME in source_names]
+        else:
+            rec = (strategy.raw_icp_params or {}).get("recommended_sources") or []
+            if rec:
+                modules = [m for m in sources_pkg.BASE_SOURCES if m.NAME in rec]
+                if not modules:
+                    modules = sources_pkg.INTENT_SOURCES
+            else:
+                modules = sources_pkg.INTENT_SOURCES
+
+        log.info(f"[sync_strategy] strategy={strategy_id} sources={[m.NAME for m in modules]}")
 
         for source_module in modules:
             run = SyncRun(strategy_id=strategy.id, source=source_module.NAME, status="running", started_at=now())
@@ -194,6 +227,9 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
                     if not cheap_relevance(raw, strategy.raw_icp_params):
                         continue
                     enriched = enrich_lead(raw)
+                    # Must have at least one reachable contact before scoring
+                    if not has_contact(enriched):
+                        continue
                     scored = score_lead(enriched, strategy)
                     if scored["intent_score"] >= strategy.intent_threshold:
                         if save_lead(db, strategy, source_module.NAME, enriched, scored):
@@ -285,6 +321,8 @@ def hourly_sync() -> None:
                         if dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", "")):
                             continue
                         enriched = enrich_lead(raw)
+                        if not has_contact(enriched):
+                            continue
                         scored = score_lead(enriched, strategy)
                         if scored["intent_score"] >= strategy.intent_threshold:
                             save_lead(db, strategy, source_module.NAME, enriched, scored)

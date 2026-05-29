@@ -49,8 +49,25 @@ Extract:
   Examples for "we help R&B/Hip-hop radio hosts find sponsors":
    ["looking for sponsors for my podcast", "how to get brand deals for my radio show", "where to find music sponsorship", "brands that sponsor hip hop content", "need a sponsor for my show", "how do indie radio hosts get sponsorships"]
 
-- `tech_keywords`, `github_topics`, `github_user_queries`, `hn_queries`, `google_search_patterns`, `twitter_bio_keywords`, `indeed_job_queries`: as before
+- `tech_keywords`, `github_topics`, `github_user_queries`, `google_search_patterns`, `twitter_bio_keywords`, `indeed_job_queries`: as before
 - `exclude_keywords`: terms that mean the result is irrelevant (course, tutorial, intern, student, etc.)
+- `recommended_sources`: CRITICAL — pick 3-6 source names from this exact list that will find the most leads for this specific strategy. Choose based on WHERE the ideal customer actually spends time online.
+
+  Available sources and when to use them:
+  - `linkedin`     — always include for B2B; professionals with job titles; decision-makers
+  - `google_cse`   — always include for B2B; finds LinkedIn profiles via Google (more reliable than Mojeek)
+  - `reddit`       — include when the ICP has active subreddits (devs, marketers, founders, consumers, any hobbyist niche)
+  - `github`       — include for developer tools, APIs, open-source, technical B2B SaaS
+  - `stackoverflow`— include for developer tools, DevOps, data engineering, anything a programmer would search
+  - `devto`        — include for developer tools, engineering culture, technical content
+  - `indiehackers` — include for indie SaaS, bootstrapped founders, productized services, solopreneurs
+  - `bing`         — include as a catch-all web search fallback for any strategy; especially useful for niche/non-tech ICPs
+
+  Examples:
+  - B2B HR software → ["linkedin", "google_cse", "reddit", "indiehackers"]
+  - Developer API tool → ["github", "stackoverflow", "devto", "reddit", "linkedin"]
+  - Consumer fitness app → ["reddit", "indiehackers", "bing"]
+  - SaaS for indie founders → ["indiehackers", "reddit", "linkedin", "bing"]
 
 Return ONLY valid JSON (no markdown):
 {{
@@ -63,13 +80,13 @@ Return ONLY valid JSON (no markdown):
   "tech_keywords": ["..."],
   "github_topics": ["..."],
   "github_user_queries": ["..."],
-  "hn_queries": ["..."],
   "google_search_patterns": [
     "site:linkedin.com/in \\"role\\" \\"industry\\""
   ],
   "twitter_bio_keywords": ["..."],
   "indeed_job_queries": ["..."],
-  "exclude_keywords": ["course", "tutorial", "intern", "student"]
+  "exclude_keywords": ["course", "tutorial", "intern", "student"],
+  "recommended_sources": ["linkedin", "google_cse", "reddit"]
 }}"""
 
     try:

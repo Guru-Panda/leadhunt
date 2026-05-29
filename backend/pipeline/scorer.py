@@ -90,6 +90,77 @@ def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
     }
 
 
+def score_post_for_intent(content: str, icp_params: dict) -> dict:
+    """Score raw post/comment content for BUYING INTENT (0.0-1.0).
+
+    Ported from MarketingAI's score_post() — intended for post-based sources
+    (SO, Dev.to, IndieHackers, GitHub issues) where the post IS the buying signal.
+
+    Returns:
+        intent_score: float
+        summary: str
+        matched_keywords: list[str]
+        signals: list[str]
+    """
+    buyer_phrases = icp_params.get("buyer_phrases") or []
+    intent_kws = icp_params.get("buyer_intent_keywords") or []
+    main_problem = icp_params.get("_main_problem") or ""
+    ideal_customer = icp_params.get("_ideal_customer") or ""
+
+    kw_str = ", ".join(intent_kws[:10]) if intent_kws else ""
+    phrase_block = "\n".join(f"  - {p}" for p in buyer_phrases[:8]) if buyer_phrases else ""
+
+    context_lines = []
+    if main_problem:
+        context_lines.append(f"Problem the business solves: {main_problem}")
+    if ideal_customer:
+        context_lines.append(f"Ideal customer: {ideal_customer}")
+    if phrase_block:
+        context_lines.append(f"Buyer phrases to look for:\n{phrase_block}")
+    if kw_str:
+        context_lines.append(f"Intent keywords: {kw_str}")
+    context_block = "\n".join(context_lines)
+
+    prompt = f"""Score this post/question for BUYER INTENT — how likely is the author to be actively seeking our solution?
+
+Business context:
+{context_block}
+
+HIGH score (0.8-1.0): actively looking for this type of product/service, asking for recommendations, describing a problem we solve, ready to spend.
+LOW score (0.0-0.3): general discussion, off-topic, author is NOT a potential buyer.
+
+Post:
+{content[:1500]}
+
+Return ONLY valid JSON:
+{{
+  "intent_score": <0.0-1.0>,
+  "summary": "<one sentence: why this person is or isn't a potential buyer>",
+  "matched_keywords": ["<matched intent keywords/phrases found in post>"],
+  "signals": ["<short_tag>"]
+}}"""
+
+    try:
+        result = llm_json(prompt, high_quality=False, max_tokens=200)
+        score = max(0.0, min(1.0, float(result.get("intent_score", 0.0))))
+        return {
+            "intent_score": score,
+            "summary": result.get("summary", ""),
+            "matched_keywords": result.get("matched_keywords", []),
+            "signals": result.get("signals", []),
+        }
+    except Exception as e:
+        log.warning(f"score_post_for_intent failed ({e}) — heuristic fallback")
+        matched = _compute_matched_keywords(content, intent_kws)
+        score = 0.4 + (0.2 if matched else 0.0)
+        return {
+            "intent_score": score,
+            "summary": f"Heuristic: {'matched ' + ', '.join(matched[:2]) if matched else 'no strong signal'}",
+            "matched_keywords": matched,
+            "signals": ["buyer_intent_post"] if matched else [],
+        }
+
+
 def score_lead(lead: dict, strategy) -> dict:
     """Rate a lead 0.0-1.0 + collect PROOF of why.
 

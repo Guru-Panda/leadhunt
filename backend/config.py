@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     GOOGLE_CSE_ID: str = ""
     GOOGLE_API_KEY: str = ""
     HUNTER_API_KEY: str = ""
+    STACKOVERFLOW_KEY: str = ""  # optional — raises SO API from 300 to 10,000 req/day
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
 
     # Email delivery — four tiers, tried in order:
@@ -65,6 +66,8 @@ def _check_optional_features() -> None:
         missing.append("BREVO_API_KEY or RESEND_API_KEY or SMTP_USER/SMTP_PASSWORD (OTP emails logged to console)")
     if not settings.GITHUB_TOKEN:
         missing.append("GITHUB_TOKEN (GitHub source disabled)")
+    if not (settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID):
+        missing.append("GOOGLE_API_KEY + GOOGLE_CSE_ID (Google CSE source disabled — LinkedIn profiles via Google won't work)")
     if missing:
         log.warning(
             "[LeadHunt] Booted in DEV mode. Missing optional env vars:\n  - "
