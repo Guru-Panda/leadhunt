@@ -1,4 +1,4 @@
-"""LinkedIn profile discovery via Mojeek site: search.
+"""LinkedIn profile discovery via Google CSE (primary) or Mojeek (fallback).
 
 We never touch linkedin.com directly — we only read search-engine result pages
 that have already indexed public profiles.
@@ -18,10 +18,13 @@ from urllib.parse import urlparse
 import httpx
 from selectolax.parser import HTMLParser
 
+from backend.config import settings
+
 log = logging.getLogger(__name__)
 NAME = "linkedin"
 
 _MOJEEK = "https://www.mojeek.com/search"
+_GOOGLE_CSE = "https://www.googleapis.com/customsearch/v1"
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
@@ -29,6 +32,38 @@ _UA = (
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _google_cse_search(query: str, limit: int = 10) -> list[dict]:
+    """Search using Google Custom Search Engine. Returns same format as _mojeek_search."""
+    if not (settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID):
+        return []
+    try:
+        r = httpx.get(
+            _GOOGLE_CSE,
+            params={
+                "key": settings.GOOGLE_API_KEY,
+                "cx": settings.GOOGLE_CSE_ID,
+                "q": query,
+                "num": min(limit, 10),
+            },
+            timeout=10,
+        )
+        if r.status_code == 429:
+            log.warning("[linkedin] Google CSE quota exhausted")
+            return []
+        r.raise_for_status()
+        out = []
+        for item in r.json().get("items", []):
+            out.append({
+                "title": item.get("title", ""),
+                "url": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
+            })
+        return out
+    except Exception as e:
+        log.warning(f"[linkedin] Google CSE search failed for {query!r}: {e}")
+        return []
+
 
 def _mojeek_search(query: str, limit: int = 10) -> list[dict]:
     try:
@@ -156,8 +191,12 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     leads: list[dict] = []
     seen_urls: set[str] = set()
 
+    use_google = bool(settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID)
+
     for query in queries:
-        results = _mojeek_search(query, limit=10)
+        results = _google_cse_search(query, limit=10) if use_google else _mojeek_search(query, limit=10)
+        if not results and use_google:
+            results = _mojeek_search(query, limit=10)
         for r in results:
             url = (r.get("url") or "").strip()
             if not _is_linkedin_profile(url) or url in seen_urls:
@@ -195,6 +234,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             if len(leads) >= limit:
                 return leads[:limit]
 
-        time.sleep(1.5)  # gentle on Mojeek
+        if not use_google:
+            time.sleep(1.5)  # gentle on Mojeek
 
     return leads[:limit]

@@ -2,30 +2,73 @@ from __future__ import annotations
 
 import logging
 import time
+from functools import lru_cache
 
 import httpx
+
+from backend.config import settings
 
 log = logging.getLogger(__name__)
 NAME = "reddit"
 
-# Reddit's .json endpoints work without OAuth for read-only access.
-# Rate-limited to ~60 req/min by IP, far more than we need.
-_SEARCH_URL = "https://www.reddit.com/search.json"
 _UA = "LeadHunt/1.0 (lead generation research bot)"
+_SEEKING_PREFIXES = ("looking for", "recommendations", "alternative", "best tool", "how to find", "need a", "suggest")
+
+
+def _has_seeking_prefix(phrase: str) -> bool:
+    p = phrase.lower().strip()
+    return any(p.startswith(pref) for pref in _SEEKING_PREFIXES)
+
+
+@lru_cache(maxsize=1)
+def _get_oauth_token() -> str | None:
+    """Get Reddit OAuth token using client credentials. Cached per process."""
+    cid = settings.REDDIT_CLIENT_ID
+    csec = settings.REDDIT_CLIENT_SECRET
+    if not (cid and csec):
+        return None
+    try:
+        r = httpx.post(
+            "https://www.reddit.com/api/v1/access_token",
+            data={"grant_type": "client_credentials"},
+            auth=(cid, csec),
+            headers={"User-Agent": _UA},
+            timeout=10,
+        )
+        r.raise_for_status()
+        token = r.json().get("access_token")
+        log.info("[reddit] OAuth token obtained")
+        return token
+    except Exception as e:
+        log.warning(f"[reddit] OAuth token fetch failed: {e}")
+        return None
 
 
 def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
-    """Search Reddit for posts matching `query`. Returns list of post dicts."""
+    """Search Reddit for posts. Uses OAuth API if credentials set, public API otherwise."""
+    token = _get_oauth_token()
+    if token:
+        url = "https://oauth.reddit.com/search"
+        headers = {"User-Agent": _UA, "Authorization": f"Bearer {token}"}
+    else:
+        url = "https://www.reddit.com/search.json"
+        headers = {"User-Agent": _UA}
+
     try:
         r = httpx.get(
-            _SEARCH_URL,
+            url,
             params={"q": query, "sort": "new", "t": period, "limit": limit},
-            headers={"User-Agent": _UA},
+            headers=headers,
             timeout=10,
         )
         if r.status_code == 429:
             log.warning("Reddit rate-limited (429), sleeping 10s")
             time.sleep(10)
+            return []
+        if r.status_code == 401 and token:
+            # Token expired — clear cache and give up for this call
+            _get_oauth_token.cache_clear()
+            log.warning("[reddit] OAuth token expired, skipping query")
             return []
         r.raise_for_status()
         return r.json().get("data", {}).get("children", [])
@@ -35,25 +78,23 @@ def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
 
 
 def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
-    # Build high-intent queries first — people ACTIVELY asking for the solution,
-    # not just discussing the topic.  Intent-boosted variants surface posts in
-    # "buying mode"; raw phrases catch broader context.
     buyer_phrases   = icp_params.get("buyer_phrases") or []
     intent_keywords = icp_params.get("buyer_intent_keywords") or []
-    hn_queries      = icp_params.get("hn_queries") or []
 
-    # Intent-boosted: pairs each buyer phrase with a seeking verb
+    # Intent-boosted queries — only add prefix if phrase doesn't already have one
     intent_queries: list[str] = []
     for phrase in buyer_phrases[:3]:
-        intent_queries.append(f"looking for {phrase}")
-        intent_queries.append(f"recommendations {phrase}")
-        intent_queries.append(f"alternative {phrase}")
-        intent_queries.append(f"best tool {phrase}")
+        if not _has_seeking_prefix(phrase):
+            intent_queries.append(f"looking for {phrase}")
+            intent_queries.append(f"recommendations {phrase}")
+        else:
+            intent_queries.append(phrase)
+            # Add a variant with different prefix
+            intent_queries.append(f"best {phrase}")
 
     # Raw phrases + keyword fallbacks
-    raw_queries = list(dict.fromkeys(buyer_phrases[:4] + intent_keywords[:2] + hn_queries[:2]))
+    raw_queries = list(dict.fromkeys(buyer_phrases[:4] + intent_keywords[:2]))
 
-    # Intent-boosted first, deduplicated
     all_queries = list(dict.fromkeys(intent_queries + raw_queries))
 
     if not all_queries:
@@ -70,7 +111,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     leads: list[dict] = []
     seen_authors: set[str] = set()
 
-    for query in all_queries[:8]:  # more intent-boosted queries = better signal
+    for query in all_queries[:8]:
         posts = _search(query, limit=20, period="month")
         for post in posts:
             d = post.get("data", {})
@@ -92,7 +133,6 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                 snippet_parts.append(selftext[:600])
             snippet = "\n\n".join(snippet_parts)
 
-            # People in r/cofounderhunt etc. drop their emails ("DM me at...")
             from backend.enrichment.extractors import extract_emails_from_text
             emails_in_post = extract_emails_from_text(f"{title}\n{selftext}")
             primary_email = emails_in_post[0] if emails_in_post else None
@@ -124,6 +164,6 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             if len(leads) >= limit:
                 return leads[:limit]
 
-        time.sleep(1)  # gentle on Reddit
+        time.sleep(0.5)
 
     return leads[:limit]
