@@ -55,18 +55,41 @@ def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
     matched_inds = _any_word(industries)
     matched_roles = _any_word(roles)
 
-    # Score: intent is worth most, then industry, then role
-    score = 0.3  # baseline so a lead with any content isn't auto-killed
+    signals = set(lead.get("intent_signals", []))
+
+    # Source signals that already encode strong ICP confidence — trust them
+    # even when the LLM is unavailable. These signals come from targeted queries
+    # (site:linkedin.com/in "role" "industry", buyer_phrase search, etc.) so a
+    # match here is already meaningful.
+    profile_signals = {
+        "linkedin_icp_match",           # found via role×industry LinkedIn search
+        "profile_role_industry_match",  # same
+        "linkedin_profile_match",       # Google CSE LinkedIn result
+    }
+    intent_signals = {
+        "buyer_intent_post",        # Reddit/SO/DevTo post expressing a need
+        "active_github_issue",      # opened an issue requesting a solution
+        "active_so_question",       # asked SO question about our domain
+        "active_hiring_thread",     # in HN Who-is-Hiring
+        "intent_match",
+        "intent_in_one_liner",
+        "email_in_post",
+    }
+
+    # Start from the strongest signal present, not a flat baseline
+    if profile_signals & signals:
+        score = 0.55  # already targeted by ICP query — likely a real match
+    elif intent_signals & signals:
+        score = 0.50  # actively expressing a need
+    else:
+        score = 0.30  # generic lead, needs keyword evidence to pass
+
     if matched_intent:
-        score += 0.35
+        score += 0.20
     if matched_inds:
-        score += 0.15
-    if matched_roles:
         score += 0.10
-    # Source-signal nudges (hiring threads, yc founders, etc. are inherently warm)
-    strong_signals = {"active_hiring_thread", "intent_match", "intent_in_one_liner", "email_in_post", "buyer_intent_post"}
-    if strong_signals & set(lead.get("intent_signals", [])):
-        score += 0.1
+    if matched_roles:
+        score += 0.08
     score = max(0.0, min(1.0, score))
 
     summary_bits = []

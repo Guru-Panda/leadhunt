@@ -74,7 +74,7 @@ class Strategy(Base):
     target_roles: Mapped[list[str]] = mapped_column(JSONType, default=list)
     target_industries: Mapped[list[str]] = mapped_column(JSONType, default=list)
     raw_icp_params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
-    intent_threshold: Mapped[float] = mapped_column(Float, default=0.5)
+    intent_threshold: Mapped[float] = mapped_column(Float, default=0.35)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
