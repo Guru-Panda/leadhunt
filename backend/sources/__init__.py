@@ -16,6 +16,7 @@ from backend.sources import (
     devto,
     indiehackers,
     apollo,
+    jobs,
 )
 
 BASE_SOURCES = [
@@ -36,6 +37,7 @@ BASE_SOURCES = [
     devto,
     indiehackers,
     apollo,
+    jobs,
 ]
 
 # INTENT sources — the default hourly hunt.

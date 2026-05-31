@@ -65,12 +65,16 @@ def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
         "linkedin_icp_match",           # found via role×industry LinkedIn search
         "profile_role_industry_match",  # same
         "linkedin_profile_match",       # Google CSE LinkedIn result
+        "apollo_icp_match",             # Apollo DB match on role+industry+location
+        "verified_contact",             # Apollo verified email present
     }
     intent_signals = {
         "buyer_intent_post",        # Reddit/SO/DevTo post expressing a need
         "active_github_issue",      # opened an issue requesting a solution
         "active_so_question",       # asked SO question about our domain
         "active_hiring_thread",     # in HN Who-is-Hiring
+        "active_hiring_signal",     # company hiring for our target role (jobs source)
+        "company_growth_signal",    # growth signal from job postings
         "intent_match",
         "intent_in_one_liner",
         "email_in_post",
@@ -111,6 +115,79 @@ def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
         "ai_summary": summary,
         "signal_label": _signal_label(score),
     }
+
+
+# Sources where the lead's POST/QUESTION content IS the buying signal.
+# These get scored with score_post_for_intent() (MarketingAI style) — we read
+# what they actually wrote and judge whether they're a buyer RIGHT NOW.
+POST_BASED_SOURCES = {
+    "reddit",
+    "stackoverflow",
+    "devto",
+    "indiehackers",
+    "bing",
+    "hackernews",
+}
+
+# Sources that return ICP-matched PROFILES (no active post). These get scored
+# with score_lead() — judged on role/industry/company fit, not live intent.
+PROFILE_BASED_SOURCES = {
+    "apollo",
+    "linkedin",
+    "google_cse",
+}
+
+
+def score_lead_smart(lead: dict, strategy) -> dict:
+    """Dispatch to the right scorer based on the lead's source.
+
+    - Post-based sources (Reddit, SO, Dev.to, IH, web search, HN): the content
+      the person wrote is the buying signal → score_post_for_intent().
+    - Profile-based sources (Apollo, LinkedIn, Google CSE): no live post, just an
+      ICP-matched profile → score_lead().
+    - GitHub & discovered sources: fall through to score_lead() which already
+      handles their intent_signals.
+    """
+    source = (lead.get("source") or "").split(":")[0]  # strip "discovered:" prefix
+    icp = strategy.raw_icp_params or {}
+
+    if source in POST_BASED_SOURCES:
+        rd = lead.get("raw_data") or {}
+        bio = str(rd.get("bio", ""))[:500]
+        context = str(rd.get("context", ""))[:300]
+        snippet = str(lead.get("source_snippet") or "")[:500]
+        content = f"{bio}\n{context}\n{snippet}".strip()
+
+        icp_ctx = {
+            **icp,
+            "_main_problem": strategy.main_problem,
+            "_ideal_customer": strategy.ideal_customer,
+        }
+        result = score_post_for_intent(content, icp_ctx)
+
+        score = result.get("intent_score", 0.0)
+        summary = result.get("summary", "")
+        matched_kw = result.get("matched_keywords", [])
+        signals = result.get("signals", []) or lead.get("intent_signals", [])
+
+        content_lower = content.lower()
+        verified_phrases = [
+            k for k in matched_kw
+            if isinstance(k, str) and k.strip() and k.strip().lower() in content_lower
+        ][:3]
+
+        return {
+            "intent_score": score,
+            "reasoning": summary,
+            "intent_signals": signals,
+            "matched_phrases": verified_phrases,
+            "matched_keywords": _compute_matched_keywords(content, icp.get("buyer_intent_keywords", []) or []),
+            "ai_summary": summary,
+            "signal_label": _signal_label(score),
+        }
+
+    # Profile-based and everything else → ICP-fit scoring
+    return score_lead(lead, strategy)
 
 
 def score_post_for_intent(content: str, icp_params: dict) -> dict:

@@ -78,7 +78,7 @@ def resolve_url_pattern(pattern: str, strategy: Strategy) -> str:
 
 def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session) -> None:
     from backend.pipeline.universal_extractor import extract_leads_from_url
-    from backend.pipeline.scorer import score_lead
+    from backend.pipeline.scorer import score_lead_smart
     from backend.enrichment.email import enrich_lead
 
     url = resolve_url_pattern(ds.url_pattern, strategy)
@@ -102,7 +102,7 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
         enriched = enrich_lead(raw)
         if not has_contact(enriched):
             continue
-        scored = score_lead(enriched, strategy)
+        scored = score_lead_smart(enriched, strategy)
         if scored["intent_score"] >= strategy.intent_threshold:
             save_lead(db, strategy, f"discovered:{ds.name}", enriched, scored)
             saved += 1
@@ -186,7 +186,7 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
     """
     from backend.database import SessionLocal
     from backend.enrichment.email import enrich_lead
-    from backend.pipeline.scorer import score_lead
+    from backend.pipeline.scorer import score_lead_smart
     import backend.sources as sources_pkg
 
     db = SessionLocal()
@@ -230,7 +230,7 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
                     # Must have at least one reachable contact before scoring
                     if not has_contact(enriched):
                         continue
-                    scored = score_lead(enriched, strategy)
+                    scored = score_lead_smart(enriched, strategy)
                     if scored["intent_score"] >= strategy.intent_threshold:
                         if save_lead(db, strategy, source_module.NAME, enriched, scored):
                             saved += 1
@@ -296,7 +296,7 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
 def hourly_sync() -> None:
     from backend.database import SessionLocal
     from backend.enrichment.email import enrich_lead
-    from backend.pipeline.scorer import score_lead
+    from backend.pipeline.scorer import score_lead_smart
     import backend.sources as sources_pkg
 
     db = SessionLocal()
@@ -323,7 +323,7 @@ def hourly_sync() -> None:
                         enriched = enrich_lead(raw)
                         if not has_contact(enriched):
                             continue
-                        scored = score_lead(enriched, strategy)
+                        scored = score_lead_smart(enriched, strategy)
                         if scored["intent_score"] >= strategy.intent_threshold:
                             save_lead(db, strategy, source_module.NAME, enriched, scored)
                             saved += 1
