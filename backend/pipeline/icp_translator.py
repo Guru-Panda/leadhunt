@@ -41,22 +41,34 @@ Extract:
    * "sells to recently-funded startups" → ["just raised", "seed round", "series a", "fundraising", "announcing our funding"]
    * "sells KYC automation" → ["kyc", "compliance burden", "manual onboarding", "regulatory headache"]
 
-- `buyer_phrases`: THE MOST IMPORTANT FIELD. 10-15 realistic phrases a prospect would actually TYPE/POST online when they need what we offer. These are how we find people EXPRESSING the need — not just industry matches. Write them as natural search/forum language, first-person where natural.
+- `buyer_phrases`: THE MOST IMPORTANT FIELD. 10-15 realistic phrases a prospect would actually TYPE/POST online when they need what we offer. These are FIRST-PERSON expressions of an active need — not industry jargon. Write as natural forum/social language.
 
   Examples for "we sell website load-testing tools":
-   ["looking for a load testing tool", "how do I simulate website traffic", "recommendations for stress testing my site", "best tool to test server under load", "my site crashes under traffic help", "alternatives to loadrunner", "anyone use a good performance testing service"]
+   ["looking for a load testing tool", "how do I simulate website traffic", "recommendations for stress testing my site", "best tool to test server under load", "my site crashes under traffic", "alternatives to loadrunner"]
 
   Examples for "we help R&B/Hip-hop radio hosts find sponsors":
-   ["looking for sponsors for my podcast", "how to get brand deals for my radio show", "where to find music sponsorship", "brands that sponsor hip hop content", "need a sponsor for my show", "how do indie radio hosts get sponsorships"]
+   ["looking for sponsors for my podcast", "how to get brand deals for my radio show", "where to find music sponsorship", "need a sponsor for my show", "brands that sponsor hip hop content"]
+
+  Examples for "we book wedding DJs in Albany NY":
+   ["looking for wedding DJ recommendations", "need a DJ for my wedding in Albany", "can anyone recommend a good wedding DJ", "best wedding DJ in upstate NY", "how much does a wedding DJ cost", "DJ recommendations for reception", "wedding entertainment ideas"]
+
+- `target_subreddits`: 3-6 specific subreddit names (without r/) WHERE your ideal buyers congregate and post. Think: where would someone go to ask for what you sell?
+
+  Examples:
+  - Wedding DJ → ["weddingplanning", "weddingadvice", "Brides", "wedding", "upstateNY"]
+  - HR software → ["humanresources", "smallbusiness", "entrepreneur", "startups"]
+  - Dev tools → ["webdev", "devops", "programming", "ExperiencedDevs"]
+  - Podcast sponsors → ["podcasting", "podcasters", "mildlyinfluential"]
 
 - `tech_keywords`, `github_topics`, `github_user_queries`, `google_search_patterns`, `twitter_bio_keywords`, `indeed_job_queries`: as before
 - `exclude_keywords`: terms that mean the result is irrelevant (course, tutorial, intern, student, etc.)
 - `recommended_sources`: CRITICAL — pick 3-6 source names from this exact list that will find the most leads for this specific strategy. Choose based on WHERE the ideal customer actually spends time online.
 
   Available sources and when to use them:
-  - `linkedin`     — always include for B2B; professionals with job titles; decision-makers
-  - `google_cse`   — always include for B2B; finds LinkedIn profiles via Google (more reliable than Mojeek)
-  - `reddit`       — include when the ICP has active subreddits (devs, marketers, founders, consumers, any hobbyist niche)
+  - `apollo`       — ALWAYS include for B2B; 275M contact database with verified emails + LinkedIn URLs; best data quality
+  - `linkedin`     — include for B2B; professionals with job titles; decision-makers
+  - `google_cse`   — include for B2B; finds LinkedIn profiles via Google (more reliable than Mojeek)
+  - `reddit`       — include when the ICP has active subreddits (devs, marketers, founders, consumers, any hobbyist niche); GREAT for local services and consumer products
   - `github`       — include for developer tools, APIs, open-source, technical B2B SaaS
   - `stackoverflow`— include for developer tools, DevOps, data engineering, anything a programmer would search
   - `devto`        — include for developer tools, engineering culture, technical content
@@ -64,10 +76,10 @@ Extract:
   - `bing`         — include as a catch-all web search fallback for any strategy; especially useful for niche/non-tech ICPs
 
   Examples:
-  - B2B HR software → ["linkedin", "google_cse", "reddit", "indiehackers"]
-  - Developer API tool → ["github", "stackoverflow", "devto", "reddit", "linkedin"]
-  - Consumer fitness app → ["reddit", "indiehackers", "bing"]
-  - SaaS for indie founders → ["indiehackers", "reddit", "linkedin", "bing"]
+  - B2B HR software → ["apollo", "linkedin", "google_cse", "reddit", "indiehackers"]
+  - Developer API tool → ["apollo", "github", "stackoverflow", "devto", "reddit"]
+  - Local consumer service (wedding, events) → ["reddit", "bing", "google_cse"]
+  - SaaS for indie founders → ["apollo", "indiehackers", "reddit", "linkedin"]
 
 Return ONLY valid JSON (no markdown):
 {{
@@ -75,6 +87,7 @@ Return ONLY valid JSON (no markdown):
   "target_roles": ["..."],
   "buyer_intent_keywords": ["...", "..."],
   "buyer_phrases": ["looking for ...", "how do I ...", "recommendations for ...", "..."],
+  "target_subreddits": ["subreddit1", "subreddit2"],
   "company_size_min": 10,
   "company_size_max": 5000,
   "tech_keywords": ["..."],

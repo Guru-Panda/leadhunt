@@ -80,29 +80,41 @@ def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
 def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     buyer_phrases   = icp_params.get("buyer_phrases") or []
     intent_keywords = icp_params.get("buyer_intent_keywords") or []
+    target_subreddits = icp_params.get("target_subreddits") or []
 
-    # Intent-boosted queries — only add prefix if phrase doesn't already have one
-    intent_queries: list[str] = []
-    for phrase in buyer_phrases[:3]:
+    all_queries: list[str] = []
+
+    # Strategy 1: Subreddit-scoped queries (highest signal)
+    # Searching WHERE buyers congregate + what they say when they need our solution
+    if target_subreddits and buyer_phrases:
+        for sub in target_subreddits[:3]:
+            for phrase in buyer_phrases[:3]:
+                # Search within the specific subreddit for the buying phrase
+                all_queries.append(f"subreddit:{sub} {phrase}")
+        # Also search subreddits for broader intent keywords
+        for sub in target_subreddits[:2]:
+            for kw in intent_keywords[:2]:
+                all_queries.append(f"subreddit:{sub} {kw}")
+
+    # Strategy 2: Phrase-based search (buying intent expressions)
+    for phrase in buyer_phrases[:4]:
         if not _has_seeking_prefix(phrase):
-            intent_queries.append(f"looking for {phrase}")
-            intent_queries.append(f"recommendations {phrase}")
+            all_queries.append(f"looking for {phrase}")
+            all_queries.append(f"recommendations {phrase}")
         else:
-            intent_queries.append(phrase)
-            # Add a variant with different prefix
-            intent_queries.append(f"best {phrase}")
+            all_queries.append(phrase)
 
-    # Raw phrases + keyword fallbacks
-    raw_queries = list(dict.fromkeys(buyer_phrases[:4] + intent_keywords[:2]))
+    # Strategy 3: Keyword fallback
+    for kw in intent_keywords[:2]:
+        all_queries.append(kw)
 
-    all_queries = list(dict.fromkeys(intent_queries + raw_queries))
+    all_queries = list(dict.fromkeys(q for q in all_queries if q.strip()))
 
     if not all_queries:
         raw_text = (icp_params.get("_main_problem") or "").strip()
         if raw_text:
             all_queries = [
                 f"looking for {raw_text[:60]}",
-                f"recommendations {raw_text[:60]}",
                 raw_text[:80],
             ]
     if not all_queries:

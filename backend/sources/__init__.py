@@ -15,6 +15,7 @@ from backend.sources import (
     stackoverflow,
     devto,
     indiehackers,
+    apollo,
 )
 
 BASE_SOURCES = [
@@ -34,14 +35,16 @@ BASE_SOURCES = [
     stackoverflow,
     devto,
     indiehackers,
+    apollo,
 ]
 
 # INTENT sources — the default hourly hunt.
 # These find prospects who are ACTIVELY expressing a need (buyer intent posts)
 # or match the ICP profile precisely — not random accounts scraped from a community.
 INTENT_SOURCES = [
+    apollo,         # 275M contacts DB — verified emails + LinkedIn; best data quality
     linkedin,       # ICP-driven site:linkedin.com/in searches → exact role + industry match
-    reddit,         # Intent-boosted queries: "looking for X", "recommendations for Y"
+    reddit,         # Subreddit-scoped + intent-boosted queries: "looking for X"
     github,         # Issues/Discussions (people asking for solutions) + user profiles
     stackoverflow,  # Questions matching buyer phrases — people actively seeking solutions
     devto,          # Tag-based search → developers discussing problems we solve

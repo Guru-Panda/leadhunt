@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     HUNTER_API_KEY: str = ""
     STACKOVERFLOW_KEY: str = ""  # optional — raises SO API from 300 to 10,000 req/day
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
+    APOLLO_API_KEY: str = ""  # apollo.io — 275M contacts, verified emails. Free: 50 exports/mo
 
     # Email delivery — four tiers, tried in order:
     # 1. Brevo (HTTPS, 300/day free, sender-email verification only — RECOMMENDED if no domain)
