@@ -140,4 +140,6 @@ npm run dev   # http://localhost:5173 — Vite proxies /api to localhost:8000
 
 ## Email provenance
 
-Every saved lead carries `email_source` ∈ `{source_text, company_site, github_commit, whois, hunter, pattern_guess}` — the UI shows a color-coded confidence pill so you know whether to trust the address.
+Every saved lead carries `email_source` ∈ `{source_text, company_site, github_commit, whois, hunter, hunter_verified, pattern_guess}` — the UI shows a color-coded confidence pill so you know whether to trust the address.
+
+`hunter` (found via Hunter.io email-finder) and `hunter_verified` (a pattern guess confirmed valid by Hunter's verifier) are the highest-confidence sources. Hunter usage is quota-guarded against the free tier (25 searches + 50 verifications/month) — set `HUNTER_API_KEY` to enable.

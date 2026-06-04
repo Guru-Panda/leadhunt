@@ -106,15 +106,80 @@ def scrape_github_commit_emails(github_url: str) -> list[str]:
         return []
 
 
-def hunter_quota_available() -> bool:
+# ── Hunter.io free-tier guard ────────────────────────────────────────────────
+# Free plan: 25 email-finder "searches" + 50 "verifications" per month. We must
+# NOT blow through these blindly. We check the account's remaining quota (cached
+# per process) and keep a safety buffer so manual UI usage isn't starved.
+_HUNTER_SAFETY_BUFFER = 3          # never spend the last N searches automatically
+_hunter_cache: dict = {"searches_left": None, "verifications_left": None, "checked": False}
+
+
+def _hunter_account() -> dict:
+    """Fetch remaining Hunter quota once per process. Returns {} on failure.
+
+    Response shape (v2/account):
+      data.requests.searches      = {used, available}
+      data.requests.verifications = {used, available}
+    """
     from backend.config import settings
-    return bool(settings.HUNTER_API_KEY)
+    if _hunter_cache["checked"]:
+        return _hunter_cache
+    _hunter_cache["checked"] = True
+    if not settings.HUNTER_API_KEY:
+        return _hunter_cache
+    try:
+        r = httpx.get(
+            "https://api.hunter.io/v2/account",
+            params={"api_key": settings.HUNTER_API_KEY},
+            timeout=10,
+        )
+        reqs = (r.json().get("data") or {}).get("requests") or {}
+        srch = reqs.get("searches") or {}
+        verf = reqs.get("verifications") or {}
+        _hunter_cache["searches_left"] = max(0, (srch.get("available", 0) - srch.get("used", 0)))
+        _hunter_cache["verifications_left"] = max(0, (verf.get("available", 0) - verf.get("used", 0)))
+        log.info(
+            f"[hunter] free quota — searches left: {_hunter_cache['searches_left']}, "
+            f"verifications left: {_hunter_cache['verifications_left']}"
+        )
+    except Exception as e:
+        log.debug(f"[hunter] account check failed: {e}")
+    return _hunter_cache
 
 
-def hunter_find(name: str, domain: str) -> str | None:
+def hunter_quota_available() -> bool:
+    """True only if a Hunter key is set AND there's search quota above the buffer."""
     from backend.config import settings
     if not settings.HUNTER_API_KEY:
-        return None
+        return False
+    acct = _hunter_account()
+    left = acct.get("searches_left")
+    if left is None:
+        return True  # account check failed — allow one attempt, finder will self-limit
+    return left > _HUNTER_SAFETY_BUFFER
+
+
+def _hunter_verifications_available() -> bool:
+    from backend.config import settings
+    if not settings.HUNTER_API_KEY:
+        return False
+    acct = _hunter_account()
+    left = acct.get("verifications_left")
+    if left is None:
+        return True
+    return left > _HUNTER_SAFETY_BUFFER
+
+
+def hunter_find(name: str, domain: str) -> tuple[str | None, bool]:
+    """Find a person's email via Hunter. Returns (email, verified).
+
+    `verified` is True only when Hunter's confidence score is high (>=80) or it
+    explicitly returns verification.status == "valid". Otherwise the email is a
+    confidence-scored guess and should be saved as unverified.
+    """
+    from backend.config import settings
+    if not settings.HUNTER_API_KEY:
+        return None, False
     parts = (name or "").split()
     first = parts[0] if parts else ""
     last = parts[-1] if len(parts) > 1 else ""
@@ -124,9 +189,47 @@ def hunter_find(name: str, domain: str) -> str | None:
             params={"domain": domain, "first_name": first, "last_name": last, "api_key": settings.HUNTER_API_KEY},
             timeout=10,
         )
-        return r.json().get("data", {}).get("email")
+        # Decrement our cached counter so we stop before exhausting the free tier
+        if _hunter_cache["searches_left"] is not None:
+            _hunter_cache["searches_left"] = max(0, _hunter_cache["searches_left"] - 1)
+        data = r.json().get("data", {}) or {}
+        email = data.get("email")
+        if not email:
+            return None, False
+        score = data.get("score") or 0
+        status = (data.get("verification") or {}).get("status") or ""
+        verified = status == "valid" or score >= 80
+        return email, verified
     except Exception as e:
         log.debug(f"Hunter API failed: {e}")
+        return None, False
+
+
+def hunter_verify(email: str) -> bool | None:
+    """Verify a single email via Hunter's verifier (separate free quota).
+
+    Returns True (valid), False (invalid), or None (unknown / no quota).
+    Used to upgrade pattern-guessed emails to verified for free.
+    """
+    from backend.config import settings
+    if not settings.HUNTER_API_KEY or not _hunter_verifications_available():
+        return None
+    try:
+        r = httpx.get(
+            "https://api.hunter.io/v2/email-verifier",
+            params={"email": email, "api_key": settings.HUNTER_API_KEY},
+            timeout=10,
+        )
+        if _hunter_cache["verifications_left"] is not None:
+            _hunter_cache["verifications_left"] = max(0, _hunter_cache["verifications_left"] - 1)
+        status = (r.json().get("data") or {}).get("status") or ""
+        if status == "valid":
+            return True
+        if status in ("invalid", "disposable"):
+            return False
+        return None  # accept_all / webmail / unknown — inconclusive
+    except Exception as e:
+        log.debug(f"Hunter verify failed for {email}: {e}")
         return None
 
 
@@ -247,21 +350,33 @@ def enrich_lead(lead_draft: dict) -> dict:
                 return lead_draft
 
     # ── 4. Hunter.io BEFORE pattern guess (more reliable when available)
+    #       Quota-guarded: only fires while free-tier searches remain above buffer.
     if hunter_quota_available() and name and domain:
-        email = hunter_find(name, domain)
+        email, verified = hunter_find(name, domain)
         if email:
             lead_draft["person_email"] = email
-            lead_draft["email_verified"] = True
+            lead_draft["email_verified"] = verified
             lead_draft["email_source"] = "hunter"
             return lead_draft
 
-    # ── 5. Best-guess pattern — UNVERIFIED, last resort
+    # ── 5. Best-guess pattern — last resort. Try to VERIFY the guess for free
+    #       via Hunter's verifier (separate 50/mo quota) so a confirmed guess
+    #       becomes a real verified email instead of a shot in the dark.
     if name and domain:
         guess = best_guess_email(name, domain)
         if guess:
+            verdict = hunter_verify(guess)
+            if verdict is False:
+                # Guess is provably invalid — try the next-likeliest pattern once
+                alts = guess_email_patterns(name, domain)[1:3]
+                for alt in alts:
+                    if hunter_verify(alt) is True:
+                        guess = alt
+                        verdict = True
+                        break
             lead_draft["person_email"] = guess
-            lead_draft["email_verified"] = False
-            lead_draft["email_source"] = "pattern_guess"
+            lead_draft["email_verified"] = verdict is True
+            lead_draft["email_source"] = "hunter_verified" if verdict is True else "pattern_guess"
 
     # ── 6. LinkedIn URL — find profile for every lead that doesn't already have one
     #       Skip if we already have it (e.g. linkedin source sets it directly)
