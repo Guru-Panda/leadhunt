@@ -6,6 +6,7 @@ interface AuthState {
   isLoading: boolean
   login: (tokens: { access_token: string; refresh_token: string }) => Promise<void>
   logout: () => void
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -15,8 +16,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
 
   const fetchMe = useCallback(async () => {
-    // Demo mode: ?demo=true skips the API call
-    if (new URLSearchParams(window.location.search).get('demo') === 'true') {
+    // Demo mode: ?demo=true skips the API call — LOCAL DEV ONLY (never in prod build).
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === 'true') {
       setUser({
         id: 0,
         email: 'demo@leadhunt.io',
@@ -67,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refreshUser: fetchMe }}>
       {children}
     </AuthContext.Provider>
   )

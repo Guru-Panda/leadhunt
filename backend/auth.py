@@ -54,7 +54,7 @@ def decode_token(token: str, expected_type: str = "access") -> int:
             raise HTTPException(status_code=401, detail="Invalid token type")
         user_id = int(payload["sub"])
         return user_id
-    except JWTError:
+    except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 

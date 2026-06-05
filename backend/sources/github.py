@@ -262,6 +262,6 @@ def _extract_domain(url: str | None) -> str | None:
         from urllib.parse import urlparse
         parsed = urlparse(url if url.startswith("http") else f"https://{url}")
         host = parsed.netloc or parsed.path
-        return host.lstrip("www.") or None
+        return (host[4:] if host.startswith("www.") else host) or None
     except Exception:
         return None

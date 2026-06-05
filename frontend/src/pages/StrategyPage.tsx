@@ -15,6 +15,7 @@ const EMPTY_FORM: StrategyCreate = {
   buyer_phrases: [],
   target_locations: [],
   target_company_size: [],
+  competitors: [],
   intent_threshold: 0.5,
 }
 
@@ -46,6 +47,7 @@ export default function StrategyPage() {
         buyer_phrases: r.data.buyer_phrases,
         target_locations: r.data.target_locations,
         target_company_size: r.data.target_company_size,
+        competitors: r.data.competitors ?? [],
         intent_threshold: r.data.intent_threshold,
       })
     },
@@ -104,6 +106,7 @@ export default function StrategyPage() {
       buyer_phrases: s.buyer_phrases,
       target_locations: s.target_locations,
       target_company_size: s.target_company_size,
+      competitors: s.competitors ?? [],
       intent_threshold: s.intent_threshold,
     })
   }
@@ -241,6 +244,13 @@ export default function StrategyPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Buyer intent phrases</label>
                 <TagInput value={form.buyer_phrases} onChange={(v) => setForm({ ...form, buyer_phrases: v })} placeholder="looking for risk tool, compliance automation…" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Competitors <span className="font-normal text-gray-400">— we'll mine their unhappy customers as switch-intent leads</span>
+                </label>
+                <TagInput value={form.competitors} onChange={(v) => setForm({ ...form, competitors: v })} placeholder="Mailchimp, HubSpot…" />
               </div>
 
               <div>

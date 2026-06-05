@@ -10,10 +10,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from backend import credits as credits_svc
 from backend.auth import get_current_user
+from backend.config import settings
 from backend.database import get_db
 from backend.models import Lead, Strategy, User
-from backend.schemas import LeadOut, LeadStatusUpdate, OutreachResponse
+from backend.schemas import LeadOut, LeadStatusUpdate, OutreachResponse, UnlockResponse
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -257,7 +259,7 @@ def re_enrich_lead(
         "source": lead.source,
         "raw_data": lead.raw_data or {},
     }
-    enriched = enrich(draft)
+    enriched = enrich(draft, allow_premium=False)  # free tier — paid reveal is /unlock
     changed = False
     if enriched.get("person_email"):
         lead.person_email = enriched["person_email"]
@@ -273,6 +275,70 @@ def re_enrich_lead(
         db.commit()
         db.refresh(lead)
     return lead
+
+
+@router.post("/{lead_id}/unlock", response_model=UnlockResponse)
+def unlock_lead(
+    lead_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Spend credits to reveal a verified contact (premium enrichment: Apollo
+    match / Hunter find+verify). Free to browse; this is the paid action.
+
+    Test mode (BILLING_ENABLED=False): runs the full flow, charges 0, records the
+    would-be cost in the ledger. Only charges when a contact is actually found.
+    """
+    lead = db.get(Lead, lead_id)
+    if not lead or lead.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+
+    cost = settings.CREDIT_COST_UNLOCK
+    if lead.is_unlocked:
+        return UnlockResponse(lead=lead, charged=0, credits_remaining=current_user.credits or 0,
+                              billing_enabled=settings.BILLING_ENABLED)
+
+    # Don't spend our paid API quota on a user who can't pay for the result.
+    if settings.BILLING_ENABLED and (current_user.credits or 0) < cost:
+        raise HTTPException(status_code=402,
+                            detail=f"Need {cost} credits to unlock — you have {current_user.credits or 0}.")
+
+    from backend.enrichment.email import enrich_lead
+
+    draft = {
+        "person_name": lead.person_name,
+        "person_email": None,  # force premium re-find
+        "person_phone": lead.person_phone,
+        "person_linkedin_url": lead.person_linkedin_url,
+        "person_github_url": lead.person_github_url,
+        "company_name": lead.company_name,
+        "company_domain": lead.company_domain,
+        "source": lead.source,
+        "raw_data": lead.raw_data or {},
+    }
+    enriched = enrich_lead(draft, allow_premium=True)
+    improved = bool(enriched.get("person_email") or enriched.get("person_phone"))
+
+    charged = 0
+    if improved:
+        charged = credits_svc.charge(db, current_user, cost, "unlock_contact", lead.id)
+        if enriched.get("person_email"):
+            lead.person_email = enriched["person_email"]
+            lead.email_verified = enriched.get("email_verified", lead.email_verified)
+            lead.email_source = enriched.get("email_source") or lead.email_source
+            lead.email_confidence = enriched.get("email_confidence", lead.email_confidence)
+        if enriched.get("person_phone") and not lead.person_phone:
+            lead.person_phone = enriched["person_phone"]
+            lead.phone_source = enriched.get("phone_source")
+        lead.is_unlocked = True
+        db.commit()
+        db.refresh(lead)
+
+    return UnlockResponse(
+        lead=lead, charged=charged,
+        credits_remaining=current_user.credits or 0,
+        billing_enabled=settings.BILLING_ENABLED,
+    )
 
 
 @router.post("/{lead_id}/outreach", response_model=OutreachResponse)

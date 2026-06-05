@@ -50,6 +50,7 @@ class UserOut(BaseModel):
     company_name: str | None = None
     company_website: str | None = None
     employee_count: str | None = None
+    credits: int = 0
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -75,6 +76,7 @@ class StrategyCreate(BaseModel):
     buyer_phrases: list[str] = []
     target_locations: list[str] = []
     target_company_size: list[str] = []
+    competitors: list[str] = []
     intent_threshold: float = 0.5
 
     @field_validator("intent_threshold")
@@ -97,6 +99,7 @@ class StrategyOut(BaseModel):
     target_company_size: list[str]
     target_roles: list[str]
     target_industries: list[str]
+    competitors: list[str] | None = None
     raw_icp_params: dict[str, Any]
     intent_threshold: float
     is_active: bool
@@ -126,6 +129,7 @@ class LeadOut(BaseModel):
     email_confidence: float = 0.0
     person_phone: str | None = None
     phone_source: str | None = None
+    is_unlocked: bool = False
     source_url: str | None
     source_profile_url: str | None
     source_snippet: str | None
@@ -209,3 +213,31 @@ class AnalyticsOut(BaseModel):
     leads_by_day: list[dict[str, Any]]
     leads_by_source: list[dict[str, Any]]
     leads_by_score_bucket: list[dict[str, Any]]
+
+
+# ── Credits / billing ─────────────────────────────────────────────────────────
+
+class CreditBalanceOut(BaseModel):
+    credits: int
+    billing_enabled: bool
+    cost_unlock: int
+    cost_export: int
+
+
+class CreditTransactionOut(BaseModel):
+    id: int
+    amount: int
+    action: str
+    lead_id: int | None
+    balance_after: int
+    note: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UnlockResponse(BaseModel):
+    lead: LeadOut
+    charged: int
+    credits_remaining: int
+    billing_enabled: bool

@@ -38,6 +38,7 @@ class User(Base):
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     company_website: Mapped[str | None] = mapped_column(String(255), nullable=True)
     employee_count: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    credits: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # pay-per-use balance
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
     strategies: Mapped[list[Strategy]] = relationship("Strategy", back_populates="user")
@@ -73,6 +74,7 @@ class Strategy(Base):
     target_company_size: Mapped[list[str]] = mapped_column(JSONType, default=list)
     target_roles: Mapped[list[str]] = mapped_column(JSONType, default=list)
     target_industries: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    competitors: Mapped[list[str]] = mapped_column(JSONType, default=list)  # for switch-intent mining
     raw_icp_params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     intent_threshold: Mapped[float] = mapped_column(Float, default=0.35)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -136,6 +138,7 @@ class Lead(Base):
     company_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     company_size: Mapped[str | None] = mapped_column(String(50), nullable=True)
     company_industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_unlocked: Mapped[bool] = mapped_column(Boolean, default=False)  # premium verified contact revealed
     intent_score: Mapped[float] = mapped_column(Float, default=0.0)
     intent_signals: Mapped[list[str]] = mapped_column(JSONType, default=list)
     raw_data: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
@@ -162,3 +165,21 @@ class SyncRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     strategy: Mapped[Strategy] = relationship("Strategy", back_populates="sync_runs")
+
+
+class CreditTransaction(Base):
+    """Append-only ledger of credit grants and spends.
+
+    In test mode (BILLING_ENABLED=False) spends are recorded with amount=0 and a
+    note showing what they WOULD have cost, so the flow is fully exercisable for free.
+    """
+    __tablename__ = "leadhunt_credit_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("leadhunt_users.id"), nullable=False, index=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)          # +grant / -spend (0 in test mode)
+    action: Mapped[str] = mapped_column(String(50), nullable=False)        # grant | unlock_contact | export
+    lead_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

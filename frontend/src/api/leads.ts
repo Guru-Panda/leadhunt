@@ -18,6 +18,7 @@ export interface Lead {
   email_confidence: number
   person_phone: string | null
   phone_source: string | null
+  is_unlocked: boolean
   source_url: string | null
   source_profile_url: string | null
   source_snippet: string | null
@@ -72,6 +73,9 @@ export const leadsApi = {
 
   reEnrich: (id: number): Promise<{ data: Lead }> =>
     api.post(`/leads/${id}/re-enrich`),
+
+  unlock: (id: number): Promise<{ data: { lead: Lead; charged: number; credits_remaining: number; billing_enabled: boolean } }> =>
+    api.post(`/leads/${id}/unlock`),
 
   unwantedCount: (strategy_id: number): Promise<{ data: { count: number } }> =>
     api.get('/leads/unwanted-count', { params: { strategy_id } }),

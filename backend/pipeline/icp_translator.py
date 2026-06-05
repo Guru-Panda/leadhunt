@@ -126,4 +126,30 @@ Return ONLY valid JSON (no markdown):
         return parsed
     except Exception as e:
         log.error(f"ICP translation failed for strategy {strategy.id}: {e}")
-        return {}
+        # Don't leave the strategy with an empty ICP (which would collapse source
+        # selection). Seed a deterministic, company-appropriate fallback so the
+        # pipeline still hunts the RIGHT places without the LLM.
+        try:
+            from backend.pipeline.source_selector import heuristic_sources, classify_vertical
+            fallback = {
+                "industries": list(strategy.target_industries or []),
+                "target_roles": list(strategy.target_roles or []),
+                "buyer_intent_keywords": list(strategy.keywords or []),
+                "buyer_phrases": list(strategy.buyer_phrases or []),
+                "tech_keywords": list(strategy.keywords or []),
+                "recommended_sources": heuristic_sources(strategy),
+                "_main_problem": strategy.main_problem,
+                "_ideal_customer": strategy.ideal_customer,
+                "_fallback": True,
+                "_vertical": classify_vertical(strategy),
+            }
+            strategy.raw_icp_params = fallback
+            db.commit()
+            log.info(
+                f"ICP fallback for strategy {strategy.id}: vertical={fallback['_vertical']} "
+                f"sources={fallback['recommended_sources']}"
+            )
+            return fallback
+        except Exception as inner:
+            log.error(f"ICP heuristic fallback also failed for strategy {strategy.id}: {inner}")
+            return {}

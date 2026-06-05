@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { User as UserIcon, Building2, Loader2, Check } from 'lucide-react'
 import { authApi, type UserUpdate } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
@@ -12,9 +12,8 @@ const EMPTY: Required<UserUpdate> = {
 const SIZE_OPTIONS = ['1-10', '11-50', '51-200', '201-1000', '1000+']
 
 export default function ProfilePage() {
-  const qc = useQueryClient()
   // Use the AuthContext user (works in both real and demo mode)
-  const { user, isLoading } = useAuth()
+  const { user, isLoading, refreshUser } = useAuth()
 
   const [form, setForm] = useState<Required<UserUpdate>>(EMPTY)
   const [saved, setSaved] = useState(false)
@@ -36,7 +35,7 @@ export default function ProfilePage() {
   const saveMut = useMutation({
     mutationFn: (data: UserUpdate) => authApi.updateMe(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['me'] })
+      refreshUser()  // user lives in AuthContext state, not React Query
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     },

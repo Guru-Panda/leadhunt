@@ -16,23 +16,12 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from urllib.parse import urlparse
 
-import httpx
-from selectolax.parser import HTMLParser
-
-from backend.config import settings
+from backend.search_providers import web_search
 
 log = logging.getLogger(__name__)
 NAME = "jobs"
-
-_GOOGLE_CSE = "https://www.googleapis.com/customsearch/v1"
-_MOJEEK = "https://www.mojeek.com/search"
-_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-)
 
 # Public ATS domains whose job pages are reliably indexed
 _ATS_SITES = [
@@ -61,49 +50,6 @@ def _prettify(slug: str) -> str:
     return " ".join(w.capitalize() for w in re.split(r"[-_]", slug) if w)
 
 
-def _google_cse_search(query: str, limit: int = 10) -> list[dict]:
-    if not (settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID):
-        return []
-    try:
-        r = httpx.get(
-            _GOOGLE_CSE,
-            params={"key": settings.GOOGLE_API_KEY, "cx": settings.GOOGLE_CSE_ID,
-                    "q": query, "num": min(limit, 10)},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return []
-        return [{"title": i.get("title", ""), "url": i.get("link", ""),
-                 "snippet": i.get("snippet", "")} for i in r.json().get("items", [])]
-    except Exception as e:
-        log.warning(f"[jobs] Google CSE failed for {query!r}: {e}")
-        return []
-
-
-def _mojeek_search(query: str, limit: int = 10) -> list[dict]:
-    try:
-        r = httpx.get(_MOJEEK, params={"q": query},
-                      headers={"User-Agent": _UA, "Accept": "text/html"},
-                      timeout=12, follow_redirects=True)
-        if r.status_code != 200:
-            return []
-        tree = HTMLParser(r.text)
-        out = []
-        for li in tree.css(".results-standard li, ul.results-standard li, .results li"):
-            a = li.css_first("a.title, h2 a, a")
-            snip = li.css_first(".s, p")
-            if not a:
-                continue
-            out.append({"title": a.text(strip=True), "url": a.attributes.get("href", ""),
-                        "snippet": snip.text(strip=True) if snip else ""})
-            if len(out) >= limit:
-                break
-        return out
-    except Exception as e:
-        log.warning(f"[jobs] Mojeek failed for {query!r}: {e}")
-        return []
-
-
 def _build_queries(icp: dict) -> list[str]:
     """Build job-board queries from the ICP target roles.
 
@@ -128,15 +74,11 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
         log.debug("[jobs] no target_roles in ICP — skipping")
         return []
 
-    use_google = bool(settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID)
     leads: list[dict] = []
     seen_companies: set[str] = set()
 
     for query in queries:
-        results = _google_cse_search(query, 10) if use_google else _mojeek_search(query, 10)
-        if not results and use_google:
-            results = _mojeek_search(query, 10)
-
+        results = web_search(query, limit=10)
         for r in results:
             url = (r.get("url") or "").strip()
             if not url or not any(s in url for s in _ATS_SITES):
@@ -176,9 +118,6 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             })
             if len(leads) >= limit:
                 return leads[:limit]
-
-        if not use_google:
-            time.sleep(1.5)
 
     log.info(f"[jobs] fetched {len(leads)} hiring-signal company leads")
     return leads[:limit]

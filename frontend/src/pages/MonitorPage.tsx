@@ -7,6 +7,7 @@ import {
 import { monitorApi, type DiscoveredSource, type SourceStat } from '../api/monitor'
 import { strategyApi } from '../api/strategy'
 import SourceBadge from '../components/SourceBadge'
+import SystemHealth from '../components/SystemHealth'
 import clsx from 'clsx'
 
 const STATUS_ICONS: Record<string, React.ReactNode> = {
@@ -135,6 +136,9 @@ export default function MonitorPage() {
           )}
         </div>
       </div>
+
+      {/* Provider-pool health (LLM + search failover) */}
+      <SystemHealth />
 
       {/* Base sources table — per-source health snapshot */}
       <div className="card mb-6">

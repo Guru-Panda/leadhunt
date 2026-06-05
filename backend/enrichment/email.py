@@ -35,7 +35,9 @@ def _normalize_domain(domain: str | None) -> str | None:
     d = domain.strip().lower()
     if "://" in d:
         d = urlparse(d).netloc
-    d = d.lstrip("www.").rstrip("/").split("/")[0]
+    if d.startswith("www."):
+        d = d[4:]
+    d = d.rstrip("/").split("/")[0]
     return d or None
 
 
@@ -345,6 +347,12 @@ def find_linkedin_url(name: str, company: str | None = None, title: str | None =
         )
         if r.status_code != 200:
             return None
+        # Require the profile slug to actually contain the person's name before we
+        # attach it — otherwise the first "/in/" hit for a same-name stranger gets
+        # presented as this lead's profile (a fabricated, wrong link).
+        parts = [p.lower() for p in (name or "").split() if p.isalpha()]
+        first = parts[0] if parts else ""
+        last = parts[-1] if len(parts) > 1 else ""
         tree = HTMLParser(r.text)
         for a in tree.css(".results-standard a, .results a"):
             href = (a.attributes.get("href") or "").strip()
@@ -352,7 +360,14 @@ def find_linkedin_url(name: str, company: str | None = None, title: str | None =
                 continue
             try:
                 p = urlparse(href)
-                if "linkedin.com" in p.netloc and p.path.startswith("/in/"):
+                if "linkedin.com" not in p.netloc or not p.path.startswith("/in/"):
+                    continue
+                slug = p.path.lower()
+                # Accept only if the slug matches the name (last name required; for a
+                # generic last name, also require the first name to appear).
+                # Require BOTH first and last name in the slug — a last-name-only
+                # match attaches a same-name stranger's profile as fact.
+                if first and last and first in slug and last in slug:
                     return href
             except Exception:
                 continue
@@ -374,8 +389,13 @@ def _finalize(lead_draft: dict) -> dict:
     return lead_draft
 
 
-def enrich_lead(lead_draft: dict) -> dict:
+def enrich_lead(lead_draft: dict, allow_premium: bool = True) -> dict:
     """Layered email + phone discovery. Each path is short-circuit, ordered by signal strength:
+
+    `allow_premium` gates the paid paths (Apollo unlock, Hunter find/verify). During
+    the free sync we pass allow_premium=False (scrape/MX/RDAP/GitHub/pattern only);
+    the credit-charged unlock endpoint passes allow_premium=True to reveal verified data.
+
       1. Email already on the lead (from source extraction)
       1b. Apollo People Match unlock (reveals the real email/phone behind a masked search hit)
       2. Scrape company website mailto/tel links (great for SMB founders)
@@ -399,7 +419,7 @@ def enrich_lead(lead_draft: dict) -> dict:
 
     # ── 1b. Apollo unlock — search results come back masked (email_not_unlocked@…).
     #        The People Match endpoint reveals the real email (+ phone). Budget-capped.
-    if lead_draft.get("source") == "apollo":
+    if allow_premium and lead_draft.get("source") == "apollo":
         apollo_id = (lead_draft.get("raw_data") or {}).get("apollo_id")
         if apollo_id or lead_draft.get("person_linkedin_url"):
             from backend.sources.apollo import unlock as apollo_unlock
@@ -459,7 +479,7 @@ def enrich_lead(lead_draft: dict) -> dict:
 
     # ── 4. Hunter.io BEFORE pattern guess (more reliable when available)
     #       Quota-guarded: only fires while free-tier searches remain above buffer.
-    if hunter_quota_available() and name and domain:
+    if allow_premium and hunter_quota_available() and name and domain:
         email, verified = hunter_find(name, domain)
         if email:
             lead_draft["person_email"] = email
@@ -475,8 +495,9 @@ def enrich_lead(lead_draft: dict) -> dict:
     if name and domain and domain_has_mx(domain):
         guess = best_guess_email(name, domain)
         if guess:
-            verdict = hunter_verify(guess)
-            if verdict is False:
+            # Hunter verification is a paid path — only on premium unlock.
+            verdict = hunter_verify(guess) if allow_premium else None
+            if allow_premium and verdict is False:
                 # Guess is provably invalid — try the next-likeliest pattern once
                 alts = guess_email_patterns(name, domain)[1:3]
                 for alt in alts:

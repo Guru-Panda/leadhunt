@@ -10,6 +10,12 @@ from backend.models import DiscoveredSource, Lead, Strategy, SyncRun
 
 log = logging.getLogger(__name__)
 
+# Max LLM scoring CALLS per sync run before falling back to the free keyword
+# heuristic. With batching (LLM_BATCH_SIZE leads per call) this covers
+# LLM_SCORE_BUDGET * LLM_BATCH_SIZE leads — e.g. 60 * 8 = 480 leads/run.
+LLM_SCORE_BUDGET = 60
+LLM_BATCH_SIZE = 8
+
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
@@ -102,26 +108,36 @@ def _run_discovered_source(ds: DiscoveredSource, strategy: Strategy, db: Session
             raw["source_snippet"] = f"Found on {ds.name}\n{url}\n\n{raw['context']}"
         if not cheap_relevance(raw, strategy.raw_icp_params):
             continue
-        enriched = enrich_lead(raw)
+        # Score first, enrich only winners (consistent with sync_strategy).
+        from backend.llm import llm_status
+        allow_llm = not llm_status().get("rate_limited")
+        scored = score_lead_smart(raw, strategy, allow_llm=allow_llm)
+        if scored.get("intent_score", 0.0) < strategy.intent_threshold:
+            continue
+        enriched = enrich_lead(raw, allow_premium=False)
         if not has_contact(enriched):
             continue
-        scored = score_lead_smart(enriched, strategy)
-        if scored["intent_score"] >= strategy.intent_threshold:
-            save_lead(db, strategy, f"discovered:{ds.name}", enriched, scored)
-            saved += 1
+        save_lead(db, strategy, f"discovered:{ds.name}", enriched, scored)
+        saved += 1
 
     ds.leads_found_total += saved
     ds.success_rate = ds.leads_found_total / max(ds.runs, 1)
     ds.last_error = None
 
-    if ds.runs > 3 and ds.leads_found_total == 0:
-        ds.status = "broken"
-        log.info(f"Marking discovered source {ds.name} as broken (0 leads in {ds.runs} runs)")
+    # Don't penalise a source for returning 0 leads when the LLM extractor was
+    # simply unavailable (Groq rate-limited) — that's our outage, not a bad source.
+    from backend.llm import llm_status
+    llm_down = llm_status().get("rate_limited")
 
-    # Auto-delete persistently broken sources to stop monitor-table pollution
-    if ds.runs >= 5 and ds.leads_found_total == 0 and ds.status == "broken":
-        log.info(f"Auto-deleting broken discovered source {ds.name} ({ds.runs} runs, 0 leads)")
-        db.delete(ds)
+    if not llm_down:
+        if ds.runs > 3 and ds.leads_found_total == 0:
+            ds.status = "broken"
+            log.info(f"Marking discovered source {ds.name} as broken (0 leads in {ds.runs} runs)")
+
+        # Auto-delete persistently broken sources to stop monitor-table pollution
+        if ds.runs >= 5 and ds.leads_found_total == 0 and ds.status == "broken":
+            log.info(f"Auto-deleting broken discovered source {ds.name} ({ds.runs} runs, 0 leads)")
+            db.delete(ds)
 
     db.commit()
 
@@ -192,6 +208,8 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
     from backend.pipeline.scorer import score_lead_smart
     import backend.sources as sources_pkg
 
+    from backend.pipeline.scorer import score_leads_batch
+
     db = SessionLocal()
     summary: dict = {"strategy_id": strategy_id, "sources": {}}
     try:
@@ -201,20 +219,28 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
 
         # Source selection priority:
         # 1. Explicit override (source_names param from API call)
-        # 2. Per-strategy recommended_sources from ICP translator
-        # 3. Global INTENT_SOURCES fallback
+        # 2. Company-aware selector: LLM recommended_sources, else vertical heuristic
+        #    (never a dev-heavy default for a non-tech business).
         if source_names:
             modules = [m for m in sources_pkg.BASE_SOURCES if m.NAME in source_names]
         else:
-            rec = (strategy.raw_icp_params or {}).get("recommended_sources") or []
-            if rec:
-                modules = [m for m in sources_pkg.BASE_SOURCES if m.NAME in rec]
-                if not modules:
-                    modules = sources_pkg.INTENT_SOURCES
-            else:
-                modules = sources_pkg.INTENT_SOURCES
+            # Lazy re-translate if ICP never produced source recommendations — e.g.
+            # the original strategy create happened during a Groq rate-limit window,
+            # which would otherwise leave the strategy permanently source-less.
+            if not (strategy.raw_icp_params or {}).get("recommended_sources"):
+                try:
+                    from backend.pipeline.icp_translator import translate_icp
+                    translate_icp(strategy, db)
+                except Exception as e:
+                    log.warning(f"[sync_strategy] lazy ICP retranslate failed: {e}")
+            from backend.pipeline.source_selector import select_source_modules
+            modules = select_source_modules(strategy)
 
         log.info(f"[sync_strategy] strategy={strategy_id} sources={[m.NAME for m in modules]}")
+
+        from backend.llm import llm_status
+        llm_scored = 0  # per-run LLM budget counter
+        icp_for_fetch = {**(strategy.raw_icp_params or {}), "competitors": strategy.competitors or []}
 
         for source_module in modules:
             run = SyncRun(strategy_id=strategy.id, source=source_module.NAME, status="running", started_at=now())
@@ -222,21 +248,34 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
             db.commit()
             saved = 0
             try:
-                raw_leads = source_module.fetch(strategy.raw_icp_params, limit=per_source_limit)
-                for raw in raw_leads:
-                    if dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", "")):
+                raw_leads = source_module.fetch(icp_for_fetch, limit=per_source_limit)
+                # 1. Collect relevant, non-duplicate candidates (free pre-filter).
+                candidates = [
+                    raw for raw in raw_leads
+                    if not dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", ""))
+                    and cheap_relevance(raw, strategy.raw_icp_params)
+                ]
+                # 2. Batch-score (ONE LLM call per LLM_BATCH_SIZE leads, not per lead).
+                scored_pairs: list[tuple[dict, dict]] = []
+                for bi in range(0, len(candidates), LLM_BATCH_SIZE):
+                    chunk = candidates[bi:bi + LLM_BATCH_SIZE]
+                    use_llm = llm_scored < LLM_SCORE_BUDGET and not llm_status().get("rate_limited")
+                    results = score_leads_batch(chunk, strategy, allow_llm=use_llm)
+                    if use_llm:
+                        llm_scored += 1
+                    else:
+                        summary["degraded"] = True
+                    scored_pairs.extend(zip(chunk, results))
+                # 3. Enrich + save only the winners (so paid/network enrichment is
+                #    spent only on leads that clear the threshold).
+                for raw, scored in scored_pairs:
+                    if scored.get("intent_score", 0.0) < strategy.intent_threshold:
                         continue
-                    # Cheap pre-filter — skip LLM scoring for irrelevant leads (saves tokens)
-                    if not cheap_relevance(raw, strategy.raw_icp_params):
-                        continue
-                    enriched = enrich_lead(raw)
-                    # Must have at least one reachable contact before scoring
+                    enriched = enrich_lead(raw, allow_premium=False)
                     if not has_contact(enriched):
                         continue
-                    scored = score_lead_smart(enriched, strategy)
-                    if scored["intent_score"] >= strategy.intent_threshold:
-                        if save_lead(db, strategy, source_module.NAME, enriched, scored):
-                            saved += 1
+                    if save_lead(db, strategy, source_module.NAME, enriched, scored):
+                        saved += 1
                 run.leads_found = saved
                 run.status = "ok"
                 summary["sources"][source_module.NAME] = {"status": "ok", "saved": saved, "fetched": len(raw_leads)}
@@ -306,9 +345,16 @@ def hourly_sync() -> None:
     try:
         strategies = db.query(Strategy).filter(Strategy.is_active.is_(True)).all()
         log.info(f"Hourly sync: processing {len(strategies)} active strategies")
+        from backend.pipeline.scorer import score_leads_batch
+
+        from backend.pipeline.source_selector import select_source_modules
+        from backend.llm import llm_status
 
         for strategy in strategies:
-            for source_module in sources_pkg.INTENT_SOURCES:
+            llm_scored = 0  # per-strategy LLM budget counter
+            icp_for_fetch = {**(strategy.raw_icp_params or {}), "competitors": strategy.competitors or []}
+            # Company-aware: hunt only where THIS business's buyers actually are.
+            for source_module in select_source_modules(strategy):
                 run = SyncRun(
                     strategy_id=strategy.id,
                     source=source_module.NAME,
@@ -318,18 +364,29 @@ def hourly_sync() -> None:
                 db.add(run)
                 db.commit()
                 try:
-                    raw_leads = source_module.fetch(strategy.raw_icp_params, limit=50)
+                    raw_leads = source_module.fetch(icp_for_fetch, limit=50)
                     saved = 0
-                    for raw in raw_leads:
-                        if dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", "")):
+                    candidates = [
+                        raw for raw in raw_leads
+                        if not dedupe_check(db, strategy.user_id, source_module.NAME, raw.get("external_id", ""))
+                        and cheap_relevance(raw, strategy.raw_icp_params)
+                    ]
+                    scored_pairs: list[tuple[dict, dict]] = []
+                    for bi in range(0, len(candidates), LLM_BATCH_SIZE):
+                        chunk = candidates[bi:bi + LLM_BATCH_SIZE]
+                        use_llm = llm_scored < LLM_SCORE_BUDGET and not llm_status().get("rate_limited")
+                        results = score_leads_batch(chunk, strategy, allow_llm=use_llm)
+                        if use_llm:
+                            llm_scored += 1
+                        scored_pairs.extend(zip(chunk, results))
+                    for raw, scored in scored_pairs:
+                        if scored.get("intent_score", 0.0) < strategy.intent_threshold:
                             continue
-                        enriched = enrich_lead(raw)
+                        enriched = enrich_lead(raw, allow_premium=False)
                         if not has_contact(enriched):
                             continue
-                        scored = score_lead_smart(enriched, strategy)
-                        if scored["intent_score"] >= strategy.intent_threshold:
-                            save_lead(db, strategy, source_module.NAME, enriched, scored)
-                            saved += 1
+                        save_lead(db, strategy, source_module.NAME, enriched, scored)
+                        saved += 1
                     run.leads_found = saved
                     run.status = "ok"
                     log.info(f"Source {source_module.NAME} → {saved} new leads for strategy {strategy.id}")

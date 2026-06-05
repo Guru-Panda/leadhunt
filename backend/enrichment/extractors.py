@@ -120,7 +120,9 @@ def scrape_company_contacts(domain: str, max_pages: int = 4, timeout: int = 8) -
     """
     if not domain:
         return {"emails": [], "phones": []}
-    domain = domain.lstrip("www.").rstrip("/")
+    if domain.startswith("www."):
+        domain = domain[4:]
+    domain = domain.rstrip("/")
     if "://" in domain:
         domain = urlparse(domain).netloc
 

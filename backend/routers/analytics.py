@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from backend.auth import get_current_user
@@ -14,6 +13,8 @@ from backend.schemas import AnalyticsOut
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
+_BUCKETS = ["0.0-0.3", "0.3-0.5", "0.5-0.7", "0.7-0.9", "0.9-1.0"]
+
 
 @router.get("", response_model=AnalyticsOut)
 def get_analytics(
@@ -21,51 +22,56 @@ def get_analytics(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Lead).filter(Lead.user_id == current_user.id)
+    """All metrics computed in SQL (counts / avg / group-by) — no longer loads
+    every lead row into Python, so it scales to large accounts."""
+    filters = [Lead.user_id == current_user.id]
     if strategy_id:
-        q = q.filter(Lead.strategy_id == strategy_id)
-    leads = q.all()
+        filters.append(Lead.strategy_id == strategy_id)
 
-    total = len(leads)
-    verified = sum(1 for l in leads if l.email_verified)
-    contacted = sum(1 for l in leads if l.status == "contacted")
-    avg_score = (sum(l.intent_score for l in leads) / total) if total else 0.0
+    total = db.query(func.count(Lead.id)).filter(*filters).scalar() or 0
+    if total == 0:
+        return AnalyticsOut(
+            total_leads=0, verified_email_pct=0.0, contacted_pct=0.0, avg_intent_score=0.0,
+            leads_by_day=[], leads_by_source=[],
+            leads_by_score_bucket=[{"bucket": b, "count": 0} for b in _BUCKETS],
+        )
 
-    # leads by day (last 30 days). SQLite returns naive datetimes; normalize both sides.
+    verified = db.query(func.count(Lead.id)).filter(*filters, Lead.email_verified.is_(True)).scalar() or 0
+    contacted = db.query(func.count(Lead.id)).filter(*filters, Lead.status == "contacted").scalar() or 0
+    avg_score = db.query(func.avg(Lead.intent_score)).filter(*filters).scalar() or 0.0
+
+    # leads by day (last 30 days) — func.date() works on both SQLite and Postgres
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).replace(tzinfo=None)
-    by_day: dict[str, int] = defaultdict(int)
-    for lead in leads:
-        created = lead.created_at.replace(tzinfo=None) if lead.created_at.tzinfo else lead.created_at
-        if created >= cutoff:
-            day = created.date().isoformat()
-            by_day[day] += 1
+    day_col = func.date(Lead.created_at)
+    by_day = (
+        db.query(day_col.label("d"), func.count(Lead.id))
+        .filter(*filters, Lead.created_at >= cutoff)
+        .group_by(day_col).order_by(day_col).all()
+    )
 
-    # leads by source
-    by_source: dict[str, int] = defaultdict(int)
-    for lead in leads:
-        by_source[lead.source] += 1
+    by_source = (
+        db.query(Lead.source, func.count(Lead.id))
+        .filter(*filters).group_by(Lead.source)
+        .order_by(func.count(Lead.id).desc()).all()
+    )
 
-    # leads by score bucket
-    buckets = {"0.0-0.3": 0, "0.3-0.5": 0, "0.5-0.7": 0, "0.7-0.9": 0, "0.9-1.0": 0}
-    for lead in leads:
-        s = lead.intent_score
-        if s < 0.3:
-            buckets["0.0-0.3"] += 1
-        elif s < 0.5:
-            buckets["0.3-0.5"] += 1
-        elif s < 0.7:
-            buckets["0.5-0.7"] += 1
-        elif s < 0.9:
-            buckets["0.7-0.9"] += 1
-        else:
-            buckets["0.9-1.0"] += 1
+    bucket_col = case(
+        (Lead.intent_score < 0.3, "0.0-0.3"),
+        (Lead.intent_score < 0.5, "0.3-0.5"),
+        (Lead.intent_score < 0.7, "0.5-0.7"),
+        (Lead.intent_score < 0.9, "0.7-0.9"),
+        else_="0.9-1.0",
+    )
+    bucket_counts = dict(
+        db.query(bucket_col, func.count(Lead.id)).filter(*filters).group_by(bucket_col).all()
+    )
 
     return AnalyticsOut(
         total_leads=total,
-        verified_email_pct=round(verified / total * 100, 1) if total else 0.0,
-        contacted_pct=round(contacted / total * 100, 1) if total else 0.0,
-        avg_intent_score=round(avg_score, 3),
-        leads_by_day=[{"date": k, "count": v} for k, v in sorted(by_day.items())],
-        leads_by_source=[{"source": k, "count": v} for k, v in sorted(by_source.items(), key=lambda x: -x[1])],
-        leads_by_score_bucket=[{"bucket": k, "count": v} for k, v in buckets.items()],
+        verified_email_pct=round(verified / total * 100, 1),
+        contacted_pct=round(contacted / total * 100, 1),
+        avg_intent_score=round(float(avg_score), 3),
+        leads_by_day=[{"date": str(d), "count": c} for d, c in by_day],
+        leads_by_source=[{"source": s, "count": c} for s, c in by_source],
+        leads_by_score_bucket=[{"bucket": b, "count": bucket_counts.get(b, 0)} for b in _BUCKETS],
     )

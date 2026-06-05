@@ -60,7 +60,9 @@ def _build_lead(author: str, object_id: str, text_clean: str, query_label: str) 
         "source_url": post_url,
         "source_profile_url": profile_url,
         "source_snippet": snippet,
-        "person_github_url": f"https://github.com/{author}",
+        # NOTE: do NOT fabricate a GitHub URL from the HN username — an HN handle is
+        # not a GitHub handle, so https://github.com/{author} 404s for most users.
+        # The HN profile page (source_profile_url) is the real, always-valid link.
         "person_email": primary_email,
         "raw_data": {
             "bio": text_clean[:500],

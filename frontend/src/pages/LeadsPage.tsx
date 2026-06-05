@@ -4,9 +4,10 @@ import {
   Search, Download, Mail, CheckCircle, AlertCircle, ExternalLink,
   Github, Linkedin, Twitter, Eye, MessageSquare, ThumbsUp, ThumbsDown,
   ChevronDown, Loader2, X, Quote, Link as LinkIcon, User as UserIcon, Sparkles,
-  RefreshCw, Phone,
+  RefreshCw, Phone, Lock, Coins,
 } from 'lucide-react'
 import { leadsApi, type Lead, type LeadFilters } from '../api/leads'
+import { creditsApi } from '../api/credits'
 import { strategyApi } from '../api/strategy'
 import SourceBadge from '../components/SourceBadge'
 import SignalBlock from '../components/SignalBlock'
@@ -46,14 +47,22 @@ export default function LeadsPage() {
   const [selected, setSelected] = useState<Lead | null>(null)
   const [outreachText, setOutreachText] = useState('')
 
-  const { data: leads = [], isLoading } = useQuery({
+  const { data: leads = [], isLoading, isError } = useQuery({
     queryKey: ['leads', filters, search],
-    queryFn: () => leadsApi.list({ ...filters, search: search || undefined }).then((r) => r.data),
+    queryFn: () =>
+      leadsApi.list({ ...filters, search: search || undefined })
+        // Events live in the Opportunities feed, not the people-leads list.
+        .then((r) => r.data.filter((l) => l.source !== 'events')),
   })
 
   const { data: strategies = [] } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => strategyApi.list().then((r) => r.data),
+  })
+
+  const { data: credits } = useQuery({
+    queryKey: ['credits'],
+    queryFn: () => creditsApi.balance().then((r) => r.data),
   })
 
   // Refresh-leads flow state
@@ -118,16 +127,43 @@ export default function LeadsPage() {
     },
   })
 
+  const unlockMut = useMutation({
+    mutationFn: (id: number) => leadsApi.unlock(id),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['leads'] })
+      qc.invalidateQueries({ queryKey: ['credits'] })
+      const d = r.data
+      if (selected && selected.id === d.lead.id) setSelected(d.lead)
+      setRefreshNotice(
+        d.charged > 0
+          ? `Verified contact unlocked — ${d.charged} credit${d.charged === 1 ? '' : 's'} used (${d.credits_remaining} left).`
+          : d.billing_enabled
+            ? 'No verified contact found — not charged.'
+            : 'Unlocked (free test mode — no credits charged).'
+      )
+      setTimeout(() => setRefreshNotice(''), 6000)
+    },
+  })
+
   const handleExportCsv = () => {
     const url = leadsApi.exportCsvUrl({ ...filters, search: search || undefined })
     const token = localStorage.getItem('access_token')
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.blob())
+      .then((r) => {
+        if (!r.ok) throw new Error(`status ${r.status}`)
+        return r.blob()
+      })
       .then((blob) => {
+        const href = URL.createObjectURL(blob)
         const a = document.createElement('a')
-        a.href = URL.createObjectURL(blob)
+        a.href = href
         a.download = 'leads.csv'
         a.click()
+        URL.revokeObjectURL(href)
+      })
+      .catch((e) => {
+        setRefreshNotice(`CSV export failed (${e.message}).`)
+        setTimeout(() => setRefreshNotice(''), 6000)
       })
   }
 
@@ -214,8 +250,17 @@ export default function LeadsPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-3 flex-wrap">
+            {credits && (
+              <span
+                className="flex items-center gap-1 text-sm text-gray-600 whitespace-nowrap"
+                title={credits.billing_enabled ? 'Billing on — unlocks cost credits' : 'Test mode — unlocks are free'}
+              >
+                <Coins className="w-3.5 h-3.5 text-amber-500" />
+                {credits.credits}{credits.billing_enabled ? '' : ' (test)'}
+              </span>
+            )}
             <span className="text-sm text-gray-500 whitespace-nowrap">
-              {leads.length} leads
+              {leads.length}{leads.length >= (filters.limit ?? 100) ? '+ (first page)' : ''} leads
               {leads.length > 0 && (() => {
                 const withEmail = leads.filter((l) => l.person_email).length
                 const verified = leads.filter((l) => l.email_verified).length
@@ -267,6 +312,12 @@ export default function LeadsPage() {
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
             </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <AlertCircle className="w-8 h-8 text-red-400 mb-3" />
+              <div className="text-sm font-medium text-gray-700">Couldn't load leads</div>
+              <div className="text-xs text-gray-500 mt-1">Check your connection or try refreshing.</div>
+            </div>
           ) : leads.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="w-16 h-16 brand-chip rounded-2xl flex items-center justify-center text-3xl mb-4">🎯</div>
@@ -316,6 +367,9 @@ export default function LeadsPage() {
           }}
           onReEnrich={() => reEnrichMut.mutate(selected.id)}
           reEnriching={reEnrichMut.isPending}
+          onUnlock={() => unlockMut.mutate(selected.id)}
+          unlocking={unlockMut.isPending}
+          unlockCost={credits?.cost_unlock ?? 2}
         />
       )}
     </div>
@@ -459,7 +513,7 @@ function RefreshConfirmDialog({
 
 function LeadDrawer({
   lead, outreachText, setOutreachText, onClose, onGenerateOutreach, generatingOutreach,
-  onStatusChange, onReEnrich, reEnriching,
+  onStatusChange, onReEnrich, reEnriching, onUnlock, unlocking, unlockCost,
 }: {
   lead: Lead
   outreachText: string
@@ -470,6 +524,9 @@ function LeadDrawer({
   onStatusChange: (status: string, feedback?: number) => void
   onReEnrich: () => void
   reEnriching: boolean
+  onUnlock: () => void
+  unlocking: boolean
+  unlockCost: number
 }) {
   const [showRaw, setShowRaw] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -558,7 +615,24 @@ function LeadDrawer({
               })()}
             </>
           ) : (
-            <span className="text-sm text-gray-400">Not found — click Re-enrich to try again</span>
+            <span className="text-sm text-gray-400">Not found — unlock or re-enrich to try again</span>
+          )}
+
+          {/* Premium unlock — spends credits to reveal a verified contact */}
+          {lead.is_unlocked ? (
+            <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
+              <CheckCircle className="w-3.5 h-3.5" /> Verified contact unlocked
+            </div>
+          ) : (
+            <button
+              onClick={onUnlock}
+              disabled={unlocking}
+              className="mt-2 w-full btn-primary text-xs py-1.5 flex items-center justify-center gap-1.5 disabled:opacity-50"
+              title="Reveal a verified email/phone (Apollo/Hunter). Costs credits when billing is on."
+            >
+              {unlocking ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lock className="w-3 h-3" />}
+              Unlock verified contact ({unlockCost} {unlockCost === 1 ? 'credit' : 'credits'})
+            </button>
           )}
         </div>
 

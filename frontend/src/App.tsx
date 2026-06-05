@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import StrategyPage from './pages/StrategyPage'
 import LeadsPage from './pages/LeadsPage'
+import OpportunitiesPage from './pages/OpportunitiesPage'
 import MonitorPage from './pages/MonitorPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import ProfilePage from './pages/ProfilePage'
@@ -35,6 +36,7 @@ function AppRoutes() {
       >
         <Route index element={<Navigate to="/leads" replace />} />
         <Route path="leads" element={<LeadsPage />} />
+        <Route path="opportunities" element={<OpportunitiesPage />} />
         <Route path="strategy" element={<StrategyPage />} />
         <Route path="monitor" element={<MonitorPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />

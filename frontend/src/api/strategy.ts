@@ -12,6 +12,7 @@ export interface Strategy {
   target_company_size: string[]
   target_roles: string[]
   target_industries: string[]
+  competitors: string[] | null
   raw_icp_params: Record<string, unknown>
   intent_threshold: number
   is_active: boolean
@@ -27,6 +28,7 @@ export interface StrategyCreate {
   buyer_phrases: string[]
   target_locations: string[]
   target_company_size: string[]
+  competitors: string[]
   intent_threshold: number
 }
 

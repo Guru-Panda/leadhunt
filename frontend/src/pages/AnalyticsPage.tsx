@@ -42,7 +42,7 @@ export default function AnalyticsPage() {
     queryFn: () => strategyApi.list().then((r) => r.data),
   })
 
-  const { data: analytics, isLoading } = useQuery({
+  const { data: analytics, isLoading, isError } = useQuery({
     queryKey: ['analytics', strategyId],
     queryFn: () => analyticsApi.get(strategyId).then((r) => r.data),
   })
@@ -69,6 +69,11 @@ export default function AnalyticsPage() {
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+        </div>
+      ) : isError ? (
+        <div className="py-16 text-center">
+          <div className="text-sm font-medium text-red-600">Couldn't load analytics</div>
+          <div className="text-xs text-gray-500 mt-1">Check your connection and try again.</div>
         </div>
       ) : !analytics ? null : (
         <>

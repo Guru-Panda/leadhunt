@@ -11,7 +11,13 @@ from backend.config import settings
 log = logging.getLogger(__name__)
 NAME = "reddit"
 
-_UA = "LeadHunt/1.0 (lead generation research bot)"
+# A realistic browser UA — Reddit's public JSON hard-blocks obvious bot UAs from
+# datacenter IPs. OAuth (REDDIT_CLIENT_ID/SECRET) is still the reliable path; this
+# just maximises the keyless fallback's success rate.
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 _SEEKING_PREFIXES = ("looking for", "recommendations", "alternative", "best tool", "how to find", "need a", "suggest")
 
 
@@ -64,6 +70,10 @@ def _search(query: str, limit: int = 20, period: str = "month") -> list[dict]:
         if r.status_code == 429:
             log.warning("Reddit rate-limited (429), sleeping 10s")
             time.sleep(10)
+            return []
+        if r.status_code == 403 and not token:
+            log.warning("[reddit] 403 from public API (datacenter IP blocked). "
+                        "Set REDDIT_CLIENT_ID/SECRET for reliable access.")
             return []
         if r.status_code == 401 and token:
             # Token expired — clear cache and give up for this call

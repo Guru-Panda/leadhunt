@@ -21,12 +21,24 @@ class Settings(BaseSettings):
 
     # LLM / Sources — all optional (modules degrade gracefully)
     GROQ_API_KEY: str = ""
+    # Extra free LLM providers for the failover pool (all OpenAI-compatible).
+    # Add any you have free keys for; the pool rotates across whatever is set so a
+    # single daily quota can't take the app down.
+    GEMINI_API_KEY: str = ""       # Google AI Studio — ~1,500 req/day free
+    CEREBRAS_API_KEY: str = ""     # cerebras.ai — free, very fast
+    OPENROUTER_API_KEY: str = ""   # openrouter.ai — many :free models
+    TOGETHER_API_KEY: str = ""     # together.ai — free tier
     GITHUB_TOKEN: str = ""
     REDDIT_CLIENT_ID: str = ""
     REDDIT_CLIENT_SECRET: str = ""
     PRODUCTHUNT_TOKEN: str = ""
     GOOGLE_CSE_ID: str = ""
     GOOGLE_API_KEY: str = ""
+    # Web-search pool (failover). All optional — keyless DuckDuckGo/Mojeek work now.
+    TAVILY_API_KEY: str = ""       # tavily.com — agent-native, ~1,000 searches/mo free
+    BRAVE_SEARCH_API_KEY: str = ""  # brave.com/search/api — ~2,000 queries/mo free
+    # Opportunity engine (events). Optional — web search covers events keylessly.
+    TICKETMASTER_API_KEY: str = ""  # developer.ticketmaster.com — ~5,000 calls/day free
     HUNTER_API_KEY: str = ""
     STACKOVERFLOW_KEY: str = ""  # optional — raises SO API from 300 to 10,000 req/day
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
@@ -50,11 +62,24 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_FROM: str = "LeadHunt <onboarding@resend.dev>"
 
+    # Credits / billing — pay-per-use model.
+    # BILLING_ENABLED=False (default) = TEST MODE: unlocks are free but the ledger
+    # still records what each action WOULD cost, so the whole flow is testable for
+    # free. Flip to True to actually charge credits.
+    BILLING_ENABLED: bool = False
+    FREE_STARTER_CREDITS: int = 100   # granted to each new account
+    CREDIT_COST_UNLOCK: int = 2       # credits to unlock a verified contact
+    CREDIT_COST_EXPORT: int = 1       # credits per CSV export
+
     # App
     FRONTEND_URL: str = "http://localhost:5173"
     SYNC_INTERVAL_HOURS: int = 1
+    # Set to false on EXTRA workers in a multi-worker deploy so the hourly sync +
+    # retention cleanup run on exactly one process (otherwise every gunicorn worker
+    # starts its own scheduler → duplicate syncs and duplicate deletes).
+    RUN_SCHEDULER: bool = True
     LEAD_RETENTION_DAYS: int = 90
-    DEV_MODE: bool = True  # when true, signup response includes the OTP code
+    DEV_MODE: bool = False  # SECURITY: must stay False in prod — when True the OTP is returned in API responses (account-takeover risk). Set DEV_MODE=true locally only.
 
     class Config:
         env_file = ".env"
@@ -66,6 +91,17 @@ settings = Settings()
 # Warn (don't fail) about features that won't work without keys
 def _check_optional_features() -> None:
     missing: list[str] = []
+    if "SECRET_KEY" not in os.environ:
+        log.warning(
+            "[LeadHunt] SECRET_KEY not set in env — using an ephemeral random key. "
+            "All sessions reset on restart and tokens fail across multiple workers. "
+            "Set SECRET_KEY in production."
+        )
+    if settings.DEV_MODE:
+        log.warning(
+            "[LeadHunt] DEV_MODE is ON — OTP codes are returned in API responses. "
+            "NEVER enable this in production."
+        )
     if not settings.GROQ_API_KEY:
         missing.append("GROQ_API_KEY (ICP translator, scorer, discoverer disabled)")
     if not (settings.BREVO_API_KEY or settings.RESEND_API_KEY or (settings.SMTP_USER and settings.SMTP_PASSWORD)):

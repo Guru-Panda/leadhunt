@@ -11,6 +11,9 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; label: string }>
   bing:          { bg: '#0078d4', text: '#fff', label: 'Bing' },
   companies_house: { bg: '#1d4ed8', text: '#fff', label: 'CH' },
   remoteok:      { bg: '#ff4742', text: '#fff', label: 'RemoteOK' },
+  jobs:          { bg: '#0a66c2', text: '#fff', label: 'Hiring' },
+  competitor:    { bg: '#dc2626', text: '#fff', label: 'Switch' },
+  events:        { bg: '#7c3aed', text: '#fff', label: 'Event' },
 }
 
 function getDiscoveredColor() {

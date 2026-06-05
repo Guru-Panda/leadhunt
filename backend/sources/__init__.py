@@ -1,15 +1,9 @@
 from backend.sources import (
     github,
     hackernews,
-    producthunt,
-    ycombinator,
     reddit,
-    indeed,
-    wellfound,
     google_cse,
-    whois_rdap,
     bing,
-    companies_house,
     remoteok,
     linkedin,
     stackoverflow,
@@ -17,27 +11,30 @@ from backend.sources import (
     indiehackers,
     apollo,
     jobs,
+    competitor,
+    events,
 )
+
+# Removed 2026-06-05 (audit): producthunt/ycombinator/companies_house (empty keys →
+# always []), indeed/wellfound (Cloudflare bot-blocked → always []), whois (fetch()
+# is a no-op; lookup_domain() is still used directly by enrichment). None of these
+# were ever selected by source_selector, so removal is behaviour-neutral cleanup.
 
 BASE_SOURCES = [
     github,
     hackernews,
-    producthunt,
-    ycombinator,
     reddit,
-    indeed,
-    wellfound,
     remoteok,
     google_cse,
-    whois_rdap,
     bing,
-    companies_house,
     linkedin,
     stackoverflow,
     devto,
     indiehackers,
     apollo,
     jobs,
+    competitor,
+    events,
 ]
 
 # INTENT sources — the default hourly hunt.

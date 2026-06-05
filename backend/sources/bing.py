@@ -4,43 +4,11 @@ import logging
 import time
 from urllib.parse import urlparse
 
-import httpx
-from selectolax.parser import HTMLParser
-
 from backend.llm import llm_json
+from backend.search_providers import web_search
 
 log = logging.getLogger(__name__)
-NAME = "bing"  # kept for DB/badge compat; engine is Mojeek + LLM extraction
-
-_MOJEEK = "https://www.mojeek.com/search"
-_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
-
-
-def _mojeek_search(query: str, limit: int = 12) -> list[dict]:
-    """Mojeek returns server-rendered HTML and doesn't bot-block."""
-    try:
-        r = httpx.get(_MOJEEK, params={"q": query}, headers={"User-Agent": _UA, "Accept": "text/html"},
-                      timeout=12, follow_redirects=True)
-        if r.status_code != 200:
-            return []
-        tree = HTMLParser(r.text)
-        out: list[dict] = []
-        for li in tree.css(".results-standard li, ul.results-standard li, .results li"):
-            a = li.css_first("a.title, h2 a, a")
-            snip = li.css_first(".s, p")
-            if not a:
-                continue
-            out.append({
-                "title": a.text(strip=True),
-                "url": a.attributes.get("href", ""),
-                "snippet": snip.text(strip=True) if snip else "",
-            })
-            if len(out) >= limit:
-                break
-        return out
-    except Exception as e:
-        log.warning(f"Mojeek search failed for {query!r}: {e}")
-        return []
+NAME = "bing"  # kept for DB/badge compat; engine is the web-search pool + LLM extraction
 
 
 def _domain_of(url: str) -> str | None:
@@ -98,7 +66,7 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
     seen: set[str] = set()
 
     for query in queries:
-        results = _mojeek_search(query, limit=12)
+        results = web_search(query, limit=12)
         # Filter out social/junk domains before sending to LLM
         results = [r for r in results if r.get("url") and not any(j in (_domain_of(r["url"]) or "") for j in _JUNK_DOMAINS)]
         if not results:

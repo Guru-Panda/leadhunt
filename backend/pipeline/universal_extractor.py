@@ -64,9 +64,23 @@ Max 30 people per page. Empty list if no fits."""
 
     try:
         result = llm_json(prompt, high_quality=False, max_tokens=2500)
-        if isinstance(result, list):
-            return result
-        return []
+        if not isinstance(result, list):
+            return []
+        # Anti-hallucination: keep only people whose name OR email literally
+        # appears in the scraped page text. The LLM otherwise invents plausible
+        # people that aren't actually on the page.
+        low = text.lower()
+        verified = []
+        for p in result:
+            if not isinstance(p, dict):
+                continue
+            nm = (p.get("person_name") or "").strip().lower()
+            em = (p.get("person_email") or "").strip().lower()
+            if (nm and nm in low) or (em and em in low):
+                verified.append(p)
+        if len(verified) < len(result):
+            log.info(f"Universal extractor dropped {len(result) - len(verified)} hallucinated leads from {url}")
+        return verified
     except Exception as e:
         log.warning(f"Universal extractor LLM parse failed for {url}: {e}")
         return []

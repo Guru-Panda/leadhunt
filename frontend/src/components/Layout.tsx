@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
-import { Target, Users, Activity, BarChart2, LogOut, Crosshair, User as UserIcon } from 'lucide-react'
+import { Target, Users, Activity, BarChart2, LogOut, Crosshair, User as UserIcon, Calendar } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import OnboardingModal from './OnboardingModal'
 import LlmStatusBanner from './LlmStatusBanner'
@@ -7,6 +7,7 @@ import clsx from 'clsx'
 
 const NAV = [
   { to: '/leads', icon: Users, label: 'Leads' },
+  { to: '/opportunities', icon: Calendar, label: 'Opportunities' },
   { to: '/strategy', icon: Target, label: 'Strategy' },
   { to: '/monitor', icon: Activity, label: 'Monitor' },
   { to: '/analytics', icon: BarChart2, label: 'Analytics' },

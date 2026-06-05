@@ -34,6 +34,21 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("leadhunt_leads", "email_confidence",   "REAL",     "DOUBLE PRECISION DEFAULT 0.0"),
     ("leadhunt_leads", "person_phone",       "TEXT",     "VARCHAR(50)"),
     ("leadhunt_leads", "phone_source",       "TEXT",     "VARCHAR(50)"),
+    # Columns the models define but were missing here — without these an existing
+    # prod Postgres (created before they were added) raises UndefinedColumn on
+    # any query selecting them (LeadOut, CSV export, source_stats).
+    ("leadhunt_users", "company_name",       "TEXT",     "VARCHAR(255)"),
+    ("leadhunt_users", "employee_count",     "TEXT",     "VARCHAR(50)"),
+    ("leadhunt_leads", "company_domain",     "TEXT",     "VARCHAR(255)"),
+    ("leadhunt_leads", "company_size",       "TEXT",     "VARCHAR(50)"),
+    ("leadhunt_leads", "company_industry",   "TEXT",     "VARCHAR(255)"),
+    ("leadhunt_leads", "email_verified",     "INTEGER",  "BOOLEAN DEFAULT FALSE"),
+    # Credits / pay-per-use (Phase 1). Keep the DEFAULT in the SQLite DDL too, so
+    # existing rows are backfilled instead of left NULL.
+    ("leadhunt_users", "credits",            "INTEGER DEFAULT 100",  "INTEGER DEFAULT 100"),
+    ("leadhunt_leads", "is_unlocked",        "INTEGER DEFAULT 0",    "BOOLEAN DEFAULT FALSE"),
+    # Competitor switch-intent (Phase 2)
+    ("leadhunt_strategies", "competitors",   "TEXT",                 "JSONB"),
 ]
 
 

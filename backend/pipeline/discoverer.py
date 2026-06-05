@@ -66,7 +66,7 @@ Be SPECIFIC. Real URLs only. 15 sources minimum."""
             url = url.replace(var, val)
 
         try:
-            r = httpx.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 LeadHunt/1.0"}, follow_redirects=True)
+            r = httpx.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0 LeadHunt/1.0"}, follow_redirects=True)
             if r.status_code != 200 or len(r.text) < 500:
                 continue
             verify = llm_call(

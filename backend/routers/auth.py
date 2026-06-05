@@ -119,12 +119,14 @@ async def login(body: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/request-otp", status_code=202)
 async def request_otp(body: OTPLoginRequest, db: Session = Depends(get_db)):
     """Explicitly request OTP for passwordless login."""
+    # Identical response whether or not the email exists (no enumeration oracle).
+    # In prod (DEV_MODE off) both branches return the exact same body.
+    generic = "If that email is registered, an OTP was sent."
     user = db.query(User).filter(User.email == body.email).first()
     if not user:
-        # Don't reveal if email exists
-        return {"detail": "If that email is registered, an OTP was sent."}
+        return {"detail": generic}
     code = await _send_fresh_otp(body.email, db)
-    return _otp_response("OTP sent. Check your email.", code)
+    return _otp_response(generic, code)
 
 
 @router.post("/reset-password", status_code=200)
@@ -149,7 +151,7 @@ def reset_password(body: PasswordResetRequest, db: Session = Depends(get_db)):
             EmailOTP.email == body.email,
             EmailOTP.otp_code == body.otp_code,
             EmailOTP.used.is_(False),
-            EmailOTP.expires_at > now.replace(tzinfo=None),
+            EmailOTP.expires_at > now,
         )
         .order_by(EmailOTP.created_at.desc())
         .first()

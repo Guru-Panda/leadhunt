@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { X, Loader2, Sparkles } from 'lucide-react'
 import { authApi, type UserUpdate } from '../api/auth'
 import { useAuth } from '../context/AuthContext'
@@ -9,8 +9,7 @@ const DISMISS_KEY = 'leadhunt_onboarding_dismissed'
 const SIZE_OPTIONS = ['1-10', '11-50', '51-200', '201-1000', '1000+']
 
 export default function OnboardingModal() {
-  const { user } = useAuth()
-  const qc = useQueryClient()
+  const { user, refreshUser } = useAuth()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({
     full_name: '', role: '', company_name: '', company_website: '', employee_count: '',
@@ -26,7 +25,7 @@ export default function OnboardingModal() {
   const saveMut = useMutation({
     mutationFn: (data: UserUpdate) => authApi.updateMe(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['me'] })
+      refreshUser()  // user lives in AuthContext state, not React Query
       setOpen(false)
     },
   })

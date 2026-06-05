@@ -78,6 +78,9 @@ def _heuristic_score(lead: dict, content: str, icp: dict) -> dict:
         "intent_match",
         "intent_in_one_liner",
         "email_in_post",
+        "switch_intent",          # unhappy with a competitor → warm switch lead
+        "competitor_complaint",
+        "event_opportunity",      # event/webinar/conference to attend or sponsor
     }
 
     # Start from the strongest signal present, not a flat baseline
@@ -138,7 +141,7 @@ PROFILE_BASED_SOURCES = {
 }
 
 
-def score_lead_smart(lead: dict, strategy) -> dict:
+def score_lead_smart(lead: dict, strategy, allow_llm: bool = True) -> dict:
     """Dispatch to the right scorer based on the lead's source.
 
     - Post-based sources (Reddit, SO, Dev.to, IH, web search, HN): the content
@@ -163,7 +166,7 @@ def score_lead_smart(lead: dict, strategy) -> dict:
             "_main_problem": strategy.main_problem,
             "_ideal_customer": strategy.ideal_customer,
         }
-        result = score_post_for_intent(content, icp_ctx)
+        result = score_post_for_intent(content, icp_ctx, allow_llm=allow_llm)
 
         score = result.get("intent_score", 0.0)
         summary = result.get("summary", "")
@@ -187,10 +190,85 @@ def score_lead_smart(lead: dict, strategy) -> dict:
         }
 
     # Profile-based and everything else → ICP-fit scoring
-    return score_lead(lead, strategy)
+    return score_lead(lead, strategy, allow_llm=allow_llm)
 
 
-def score_post_for_intent(content: str, icp_params: dict) -> dict:
+def _lead_content(lead: dict) -> str:
+    rd = lead.get("raw_data") or {}
+    return f"{rd.get('bio','')}\n{rd.get('context','')}\n{lead.get('source_snippet','')}".strip()
+
+
+def score_leads_batch(leads: list[dict], strategy, allow_llm: bool = True) -> list[dict]:
+    """Score many leads in ONE LLM call instead of one call per lead.
+
+    Cuts LLM usage ~Nx (N = batch size), which is the difference between scoring
+    480 leads/run vs 60 on a free tier. Falls back to the per-lead heuristic for
+    any entry the model omits, and for the whole batch if the LLM is unavailable.
+    Returns a scored dict per input lead, in order.
+    """
+    icp = strategy.raw_icp_params or {}
+    if not leads:
+        return []
+    if not allow_llm:
+        return [_heuristic_score(l, _lead_content(l), icp) for l in leads]
+
+    intent_kws = icp.get("buyer_intent_keywords", []) or []
+    entries = "\n\n".join(
+        f"[{i}] name={l.get('person_name','?')} | title={l.get('person_title') or '?'} | source={l.get('source')}\n"
+        f"content: {_lead_content(l)[:400]}"
+        for i, l in enumerate(leads)
+    )
+    prompt = f"""Score EACH entry 0.0-1.0 as a potential customer for our ICP.
+
+OUR ICP:
+- We solve: {strategy.main_problem}
+- Ideal customer: {strategy.ideal_customer}
+- Target roles: {strategy.target_roles}
+- Target industries: {strategy.target_industries}
+- Buyer intent keywords: {intent_kws}
+
+ENTRIES:
+{entries}
+
+Return ONLY a JSON list — exactly one object per entry index:
+[{{"i": 0, "intent_score": 0.0, "summary": "one sentence referencing what they said", "signals": ["tag"]}}]
+Scoring: 0.8-1.0 = clear buyer intent; 0.5-0.7 = solid role/industry fit; 0.3-0.5 = weak; 0.0-0.2 = off-topic. Be rigorous."""
+
+    try:
+        result = llm_json(prompt, high_quality=False, max_tokens=min(3000, 130 * len(leads) + 300))
+        by_i: dict[int, dict] = {}
+        if isinstance(result, list):
+            for o in result:
+                if isinstance(o, dict) and "i" in o:
+                    try:
+                        by_i[int(o["i"])] = o
+                    except (TypeError, ValueError):
+                        continue
+    except Exception as e:
+        log.warning(f"batch scoring failed ({e}) — heuristic fallback for {len(leads)} leads")
+        return [_heuristic_score(l, _lead_content(l), icp) for l in leads]
+
+    out: list[dict] = []
+    for i, l in enumerate(leads):
+        o = by_i.get(i)
+        content = _lead_content(l)
+        if not o:
+            out.append(_heuristic_score(l, content, icp))
+            continue
+        score = max(0.0, min(1.0, float(o.get("intent_score", 0.0) or 0.0)))
+        out.append({
+            "intent_score": score,
+            "reasoning": o.get("summary", ""),
+            "intent_signals": o.get("signals") or l.get("intent_signals", []),
+            "matched_phrases": [],
+            "matched_keywords": _compute_matched_keywords(content, intent_kws),
+            "ai_summary": o.get("summary", ""),
+            "signal_label": _signal_label(score),
+        })
+    return out
+
+
+def score_post_for_intent(content: str, icp_params: dict, allow_llm: bool = True) -> dict:
     """Score raw post/comment content for BUYING INTENT (0.0-1.0).
 
     Ported from MarketingAI's score_post() — intended for post-based sources
@@ -220,6 +298,17 @@ def score_post_for_intent(content: str, icp_params: dict) -> dict:
     if kw_str:
         context_lines.append(f"Intent keywords: {kw_str}")
     context_block = "\n".join(context_lines)
+
+    if not allow_llm:
+        # LLM budget exhausted / rate-limited — heuristic without burning a call.
+        matched = _compute_matched_keywords(content, intent_kws)
+        score = 0.4 + (0.2 if matched else 0.0)
+        return {
+            "intent_score": score,
+            "summary": f"Heuristic (LLM skipped): {'matched ' + ', '.join(matched[:2]) if matched else 'no strong signal'}",
+            "matched_keywords": matched,
+            "signals": ["buyer_intent_post"] if matched else [],
+        }
 
     prompt = f"""Score this post/question for BUYER INTENT — how likely is the author to be actively seeking our solution?
 
@@ -261,7 +350,7 @@ Return ONLY valid JSON:
         }
 
 
-def score_lead(lead: dict, strategy) -> dict:
+def score_lead(lead: dict, strategy, allow_llm: bool = True) -> dict:
     """Rate a lead 0.0-1.0 + collect PROOF of why.
 
     Returns dict with:
@@ -278,6 +367,10 @@ def score_lead(lead: dict, strategy) -> dict:
     context = str((lead.get("raw_data") or {}).get("context", ""))[:200]
     snippet = str(lead.get("source_snippet") or "")[:350]
     full_content = f"{bio}\n{context}\n{snippet}".strip()
+
+    if not allow_llm:
+        # LLM budget exhausted / rate-limited — heuristic without burning a call.
+        return _heuristic_score(lead, full_content, strategy.raw_icp_params or {})
 
     intent_keywords = []
     if strategy.raw_icp_params:

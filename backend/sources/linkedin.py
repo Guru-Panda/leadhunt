@@ -51,6 +51,10 @@ def _google_cse_search(query: str, limit: int = 10) -> list[dict]:
         if r.status_code == 429:
             log.warning("[linkedin] Google CSE quota exhausted")
             return []
+        if r.status_code == 403:
+            log.error("[linkedin] Google CSE 403 Forbidden — enable the Custom Search API "
+                      "and remove key restrictions in Google Cloud Console.")
+            return []
         r.raise_for_status()
         out = []
         for item in r.json().get("items", []):
@@ -139,6 +143,21 @@ def _parse_result(result_title: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _name_from_title(title: str) -> str | None:
+    """Extract the person's real name from a search result title.
+
+    'Jane Smith - VP of Sales at Acme | LinkedIn' → 'Jane Smith'
+    More reliable than guessing from the URL slug (which is a vanity string).
+    Returns None if the head doesn't look like a 2-4 word personal name.
+    """
+    clean = re.sub(r"\s*[\|•].*$", "", title or "").strip()
+    head = clean.split(" - ", 1)[0].strip()
+    words = head.split()
+    if 2 <= len(words) <= 4 and all(re.match(r"^[A-Za-z.'’-]+$", w) for w in words):
+        return head
+    return None
+
+
 def _build_queries(icp: dict) -> list[str]:
     """Build up to 6 site:linkedin.com/in queries from ICP fields.
 
@@ -188,15 +207,13 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
         log.debug("linkedin: no queries built from ICP — skipping")
         return []
 
+    from backend.search_providers import web_search
+
     leads: list[dict] = []
     seen_urls: set[str] = set()
 
-    use_google = bool(settings.GOOGLE_API_KEY and settings.GOOGLE_CSE_ID)
-
     for query in queries:
-        results = _google_cse_search(query, limit=10) if use_google else _mojeek_search(query, limit=10)
-        if not results and use_google:
-            results = _mojeek_search(query, limit=10)
+        results = web_search(query, limit=10)
         for r in results:
             url = (r.get("url") or "").strip()
             if not _is_linkedin_profile(url) or url in seen_urls:
@@ -204,13 +221,21 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
             seen_urls.add(url)
 
             path = urlparse(url).path
-            name = _slug_to_name(path)
+            title = r.get("title", "")
+            # Prefer the real displayed name from the result title; fall back to the
+            # slug only as a last resort (slugs are vanity strings, often wrong).
+            name = _name_from_title(title) or _slug_to_name(path)
             if not name or len(name.split()) < 2:
-                continue  # slug didn't parse into a real name
+                continue
 
-            role, company = _parse_result(r.get("title", ""))
+            role, company = _parse_result(title)
             snippet = r.get("snippet", "")
-            slug = path.lstrip("/in/").lstrip("/")
+            slug = path.split("/in/")[-1].strip("/")
+
+            # Only claim a role/industry match when we actually parsed one.
+            signals = ["linkedin_icp_match"]
+            if role or company:
+                signals.append("profile_role_industry_match")
 
             leads.append({
                 "external_id": f"li_{slug[:120]}",
@@ -222,19 +247,16 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                 "source_url": url,
                 "source_profile_url": url,
                 "source_snippet": (
-                    f"LinkedIn profile — {r.get('title', name)}\n{snippet}"
+                    f"LinkedIn profile — {title or name}\n{snippet}"
                 ),
                 "raw_data": {
                     "linkedin_url": url,
                     "search_query": query,
                     "context": snippet,
                 },
-                "intent_signals": ["linkedin_icp_match", "profile_role_industry_match"],
+                "intent_signals": signals,
             })
             if len(leads) >= limit:
                 return leads[:limit]
-
-        if not use_google:
-            time.sleep(1.5)  # gentle on Mojeek
 
     return leads[:limit]

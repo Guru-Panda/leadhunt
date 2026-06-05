@@ -1,7 +1,8 @@
 import axios from 'axios'
 
 const BASE = import.meta.env.VITE_API_URL || '/api'
-const DEMO = new URLSearchParams(window.location.search).get('demo') === 'true'
+// Demo stubs are LOCAL DEV ONLY — never active in a production build.
+const DEMO = import.meta.env.DEV && new URLSearchParams(window.location.search).get('demo') === 'true'
 
 const DEMO_RESPONSES: Record<string, unknown> = {
   '/strategies': [],
