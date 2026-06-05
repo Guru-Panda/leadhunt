@@ -4,7 +4,7 @@ import {
   Search, Download, Mail, CheckCircle, AlertCircle, ExternalLink,
   Github, Linkedin, Twitter, Eye, MessageSquare, ThumbsUp, ThumbsDown,
   ChevronDown, Loader2, X, Quote, Link as LinkIcon, User as UserIcon, Sparkles,
-  RefreshCw,
+  RefreshCw, Phone,
 } from 'lucide-react'
 import { leadsApi, type Lead, type LeadFilters } from '../api/leads'
 import { strategyApi } from '../api/strategy'
@@ -21,12 +21,22 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const EMAIL_SOURCE_LABEL: Record<string, { text: string; tone: 'high' | 'medium' | 'low' }> = {
-  source_text:   { text: 'Posted publicly',    tone: 'high' },
-  company_site:  { text: 'Company site',       tone: 'high' },
-  github_commit: { text: 'GitHub commits',     tone: 'high' },
-  hunter:        { text: 'Hunter.io',          tone: 'high' },
-  whois:         { text: 'WHOIS registrant',   tone: 'medium' },
-  pattern_guess: { text: 'Pattern guess',      tone: 'low' },
+  source_text:     { text: 'Posted publicly',    tone: 'high' },
+  company_site:    { text: 'Company site',       tone: 'high' },
+  github_commit:   { text: 'GitHub commits',     tone: 'high' },
+  apollo:          { text: 'Apollo.io',          tone: 'high' },
+  hunter:          { text: 'Hunter.io',          tone: 'high' },
+  hunter_verified: { text: 'Hunter verified',    tone: 'high' },
+  whois:           { text: 'WHOIS registrant',   tone: 'medium' },
+  pattern_guess:   { text: 'Pattern guess',      tone: 'low' },
+}
+
+// Graded reachability confidence → compact label + colour.
+function confidenceMeta(c: number): { label: string; cls: string } {
+  if (c >= 0.8) return { label: 'High', cls: 'bg-green-50 text-green-700 border-green-100' }
+  if (c >= 0.5) return { label: 'Medium', cls: 'bg-blue-50 text-blue-700 border-blue-100' }
+  if (c > 0) return { label: 'Low', cls: 'bg-amber-50 text-amber-700 border-amber-100' }
+  return { label: '—', cls: 'bg-gray-50 text-gray-400 border-gray-100' }
 }
 
 export default function LeadsPage() {
@@ -363,16 +373,39 @@ function LeadRow({ lead, onView, onStatusChange }: {
 
 function EmailCell({ lead }: { lead: Lead }) {
   if (!lead.person_email) {
-    return <span className="px-2 py-0.5 bg-gray-100 text-gray-400 text-xs rounded">No email</span>
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="px-2 py-0.5 bg-gray-100 text-gray-400 text-xs rounded">No email</span>
+        {lead.person_phone && (
+          <span className="flex items-center gap-1 text-xs text-gray-500" title={`Phone · ${lead.phone_source ?? ''}`}>
+            <Phone className="w-3 h-3 shrink-0" />{lead.person_phone}
+          </span>
+        )}
+      </div>
+    )
   }
+  const conf = confidenceMeta(lead.email_confidence)
   return (
     <div className="flex items-center gap-1.5">
       {lead.email_verified
         ? <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
         : <Mail className="w-3.5 h-3.5 text-gray-300 shrink-0" />}
-      <span className={clsx('text-xs truncate max-w-[140px]', lead.email_verified ? 'text-gray-800' : 'text-gray-400')}>
+      <span className={clsx('text-xs truncate max-w-[120px]', lead.email_verified ? 'text-gray-800' : 'text-gray-500')}>
         {lead.person_email}
       </span>
+      {lead.email_confidence > 0 && (
+        <span
+          className={clsx('text-[10px] px-1.5 py-0.5 rounded border shrink-0', conf.cls)}
+          title={`Reachability confidence: ${Math.round(lead.email_confidence * 100)}%`}
+        >
+          {conf.label}
+        </span>
+      )}
+      {lead.person_phone && (
+        <span title={`Phone: ${lead.person_phone}`} className="shrink-0">
+          <Phone className="w-3 h-3 text-gray-400" />
+        </span>
+      )}
     </div>
   )
 }
@@ -509,11 +542,17 @@ function LeadDrawer({
                   : meta.tone === 'medium'
                     ? 'bg-blue-50 text-blue-700 border-blue-100'
                     : 'bg-amber-50 text-amber-700 border-amber-100'
+                const conf = confidenceMeta(lead.email_confidence)
                 return (
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
                     <span className={clsx('text-xs px-2 py-0.5 rounded border', toneCls)}>
                       {lead.email_verified ? '✓ Verified' : 'Unverified'} · {meta.text}
                     </span>
+                    {lead.email_confidence > 0 && (
+                      <span className={clsx('text-xs px-2 py-0.5 rounded border', conf.cls)}>
+                        {conf.label} confidence · {Math.round(lead.email_confidence * 100)}%
+                      </span>
+                    )}
                   </div>
                 )
               })()}
@@ -522,6 +561,24 @@ function LeadDrawer({
             <span className="text-sm text-gray-400">Not found — click Re-enrich to try again</span>
           )}
         </div>
+
+        {/* Phone */}
+        {lead.person_phone && (
+          <div className="p-3 bg-gray-50 rounded-lg">
+            <div className="text-xs text-gray-500 mb-1.5 font-medium">Phone</div>
+            <div className="flex items-center gap-1.5">
+              <Phone className="w-4 h-4 text-gray-500 shrink-0" />
+              <a href={`tel:${lead.person_phone}`} className="text-sm text-gray-900 hover:text-primary">
+                {lead.person_phone}
+              </a>
+              {lead.phone_source && (
+                <span className="text-xs px-2 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-100">
+                  {EMAIL_SOURCE_LABEL[lead.phone_source]?.text ?? lead.phone_source}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Company */}
         {lead.company_name && (

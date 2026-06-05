@@ -101,7 +101,8 @@ def export_csv(
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
         "id", "person_name", "person_title",
-        "person_email", "email_verified", "email_source",
+        "person_email", "email_verified", "email_confidence", "email_source",
+        "person_phone", "phone_source",
         "company_name", "company_domain", "company_size", "company_industry",
         "person_location", "person_linkedin_url", "person_github_url", "person_twitter_url",
         "source", "source_url", "source_profile_url", "source_snippet",
@@ -115,7 +116,10 @@ def export_csv(
             "person_title": lead.person_title or "",
             "person_email": lead.person_email or "",
             "email_verified": lead.email_verified,
+            "email_confidence": lead.email_confidence,
             "email_source": lead.email_source or "",
+            "person_phone": lead.person_phone or "",
+            "phone_source": lead.phone_source or "",
             "company_name": lead.company_name or "",
             "company_domain": lead.company_domain or "",
             "company_size": lead.company_size or "",
@@ -244,17 +248,28 @@ def re_enrich_lead(
     draft = {
         "person_name": lead.person_name,
         "person_email": None,  # reset so chain re-runs
+        "person_phone": lead.person_phone,
+        "person_linkedin_url": lead.person_linkedin_url,
         "person_github_url": lead.person_github_url,
+        "company_name": lead.company_name,
         "company_domain": lead.company_domain,
         "intent_score": lead.intent_score,
         "source": lead.source,
         "raw_data": lead.raw_data or {},
     }
     enriched = enrich(draft)
+    changed = False
     if enriched.get("person_email"):
         lead.person_email = enriched["person_email"]
         lead.email_verified = enriched.get("email_verified", False)
         lead.email_source = enriched.get("email_source")
+        lead.email_confidence = enriched.get("email_confidence", 0.0)
+        changed = True
+    if enriched.get("person_phone") and not lead.person_phone:
+        lead.person_phone = enriched["person_phone"]
+        lead.phone_source = enriched.get("phone_source")
+        changed = True
+    if changed:
         db.commit()
         db.refresh(lead)
     return lead

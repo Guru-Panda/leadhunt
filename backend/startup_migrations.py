@@ -30,6 +30,10 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("leadhunt_leads", "source_url",         "TEXT",     "VARCHAR(500)"),
     ("leadhunt_leads", "source_profile_url", "TEXT",     "VARCHAR(500)"),
     ("leadhunt_leads", "source_snippet",     "TEXT",     "TEXT"),
+    # Contact-quality columns (graded confidence + phone)
+    ("leadhunt_leads", "email_confidence",   "REAL",     "DOUBLE PRECISION DEFAULT 0.0"),
+    ("leadhunt_leads", "person_phone",       "TEXT",     "VARCHAR(50)"),
+    ("leadhunt_leads", "phone_source",       "TEXT",     "VARCHAR(50)"),
 ]
 
 

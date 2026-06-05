@@ -124,7 +124,10 @@ class Lead(Base):
     person_twitter_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     person_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    email_source: Mapped[str | None] = mapped_column(String(50), nullable=True)         # how the email was found: source_text | company_site | github_commit | whois | pattern_guess | hunter
+    email_source: Mapped[str | None] = mapped_column(String(50), nullable=True)         # how the email was found: source_text | company_site | github_commit | whois | pattern_guess | hunter | apollo
+    email_confidence: Mapped[float] = mapped_column(Float, default=0.0)                  # 0.0–1.0 graded reachability confidence (source strength × MX × verify result)
+    person_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    phone_source: Mapped[str | None] = mapped_column(String(50), nullable=True)          # how the phone was found: apollo | company_site
     # Provenance — clickable links back to where this lead came from
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)          # the post/comment/listing that matched
     source_profile_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # the person's profile on that platform

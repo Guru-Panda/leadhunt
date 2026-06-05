@@ -33,11 +33,46 @@ def _unescape(text: str) -> str:
     return text
 
 
+# Anti-scraping obfuscation: "name [at] domain [dot] com", "name (at) domain dot com", etc.
+# Normalise these back to real "@"/"." so the email regex can catch them.
+_AT_RE = re.compile(r"\s*[\[\(\{]?\s*(?:at|@)\s*[\]\)\}]?\s*", re.IGNORECASE)
+_DOT_RE = re.compile(r"\s*[\[\(\{]\s*(?:dot|\.)\s*[\]\)\}]\s*", re.IGNORECASE)
+# Only deobfuscate spans that actually look like an obfuscated email, so we don't
+# mangle ordinary prose containing the words "at"/"dot".
+_OBFUSCATED_RE = re.compile(
+    r"[A-Za-z0-9._%+\-]+\s*[\[\(\{]?\s*(?:at|@)\s*[\]\)\}]?\s*"
+    r"[A-Za-z0-9.\-]+(?:\s*[\[\(\{]?\s*(?:dot|\.)\s*[\]\)\}]?\s*[A-Za-z]{2,})+",
+    re.IGNORECASE,
+)
+
+
+def _deobfuscate(text: str) -> str:
+    def _fix(m: re.Match) -> str:
+        span = m.group(0)
+        span = _AT_RE.sub("@", span, count=1)
+        span = _DOT_RE.sub(".", span)
+        # bare " dot " (no brackets) between word chars → "."
+        span = re.sub(r"(?<=[A-Za-z0-9])\s+dot\s+(?=[A-Za-z0-9])", ".", span, flags=re.IGNORECASE)
+        return span.replace(" ", "")
+    return _OBFUSCATED_RE.sub(_fix, text)
+
+
+def decode_cfemail(hex_str: str) -> str | None:
+    """Decode a Cloudflare email-protection token (the hex in data-cfemail)."""
+    try:
+        key = int(hex_str[:2], 16)
+        return "".join(
+            chr(int(hex_str[i:i + 2], 16) ^ key) for i in range(2, len(hex_str), 2)
+        )
+    except (ValueError, IndexError):
+        return None
+
+
 def extract_emails_from_text(text: str | None) -> list[str]:
     """Pull all plausible emails out of free-form text (HN/Reddit comments, etc.)."""
     if not text:
         return []
-    text = _unescape(text)
+    text = _deobfuscate(_unescape(text))
     found = _EMAIL_RE.findall(text)
     out: list[str] = []
     seen: set[str] = set()
@@ -63,19 +98,35 @@ _CONTACT_PATHS = ["/", "/contact", "/contact-us", "/about", "/about-us", "/team"
 _UA = "Mozilla/5.0 LeadHunt/1.0"
 
 
-def scrape_company_emails(domain: str, max_pages: int = 4, timeout: int = 8) -> list[str]:
-    """Fetch a company's homepage + common contact pages, return mailto: emails found.
+_PHONE_RE = re.compile(r"(?:\+?\d[\d\-().\s]{7,}\d)")
 
-    Returns ALL emails found — caller decides which to attach to which person.
+
+def _clean_phone(raw: str) -> str | None:
+    """Normalise a tel: / visible-text phone to a compact, plausible number."""
+    digits = re.sub(r"[^\d+]", "", raw)
+    # A real phone has 7–15 digits (E.164 max is 15); reject obvious junk.
+    core = digits.lstrip("+")
+    if 7 <= len(core) <= 15:
+        return digits
+    return None
+
+
+def scrape_company_contacts(domain: str, max_pages: int = 4, timeout: int = 8) -> dict:
+    """Fetch a company's homepage + contact pages; return both emails and phones.
+
+    Handles mailto:/tel: links, Cloudflare-obfuscated emails (data-cfemail),
+    and "name [at] domain [dot] com" text obfuscation. Returns
+    {"emails": [...], "phones": [...]} — caller decides which to attach.
     """
     if not domain:
-        return []
+        return {"emails": [], "phones": []}
     domain = domain.lstrip("www.").rstrip("/")
     if "://" in domain:
         domain = urlparse(domain).netloc
-    base = f"https://{domain}"
 
-    found: set[str] = set()
+    base = f"https://{domain}"
+    emails: set[str] = set()
+    phones: set[str] = set()
     pages_fetched = 0
 
     for path in _CONTACT_PATHS:
@@ -93,16 +144,35 @@ def scrape_company_emails(domain: str, max_pages: int = 4, timeout: int = 8) -> 
                 href = a.attributes.get("href", "")
                 email = href.split("mailto:", 1)[-1].split("?", 1)[0].lower().strip()
                 if email and "@" in email:
-                    found.add(email)
-            # 2. emails in visible text (some sites obfuscate to text-only)
+                    emails.add(email)
+            # 2. tel: links — phones
+            for a in tree.css("a[href^='tel:']"):
+                href = a.attributes.get("href", "")
+                phone = _clean_phone(href.split("tel:", 1)[-1])
+                if phone:
+                    phones.add(phone)
+            # 3. Cloudflare email protection (data-cfemail attribute)
+            for el in tree.css("[data-cfemail]"):
+                decoded = decode_cfemail(el.attributes.get("data-cfemail", ""))
+                if decoded and "@" in decoded:
+                    emails.add(decoded.lower())
+            # 4. emails in visible text (deobfuscated inside extract_emails_from_text)
             visible_text = tree.body.text(separator=" ", strip=True) if tree.body else ""
             for e in extract_emails_from_text(visible_text):
                 # Only keep emails on this company's own domain (skip vendor/partner emails)
                 if e.endswith("@" + domain) or domain in e.split("@")[1]:
-                    found.add(e)
+                    emails.add(e)
         except Exception as e:
             log.debug(f"Company scrape failed for {url}: {e}")
             continue
 
-    # Filter noreply
-    return [e for e in found if not any(b in e.split("@")[0] for b in ("noreply", "no-reply", "donotreply"))]
+    clean_emails = [
+        e for e in emails
+        if not any(b in e.split("@")[0] for b in ("noreply", "no-reply", "donotreply"))
+    ]
+    return {"emails": clean_emails, "phones": list(phones)}
+
+
+def scrape_company_emails(domain: str, max_pages: int = 4, timeout: int = 8) -> list[str]:
+    """Back-compat wrapper — emails only. New callers should use scrape_company_contacts."""
+    return scrape_company_contacts(domain, max_pages=max_pages, timeout=timeout)["emails"]

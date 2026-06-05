@@ -15,6 +15,9 @@ export interface Lead {
   person_email: string | null
   email_verified: boolean
   email_source: string | null
+  email_confidence: number
+  person_phone: string | null
+  phone_source: string | null
   source_url: string | null
   source_profile_url: string | null
   source_snippet: string | null

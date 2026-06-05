@@ -123,6 +123,9 @@ class LeadOut(BaseModel):
     person_email: str | None
     email_verified: bool
     email_source: str | None
+    email_confidence: float = 0.0
+    person_phone: str | None = None
+    phone_source: str | None = None
     source_url: str | None
     source_profile_url: str | None
     source_snippet: str | None

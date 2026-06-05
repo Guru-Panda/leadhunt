@@ -28,6 +28,75 @@ NAME = "apollo"
 
 _BASE = "https://api.apollo.io/v1"
 
+# Apollo's search endpoint returns a placeholder until the contact is "unlocked"
+# via the People Match (enrich) endpoint. Treat these as no-email.
+def _is_masked(email: str | None) -> bool:
+    if not email:
+        return True
+    e = email.lower()
+    return "not_unlocked" in e or "domain.com" == e.split("@")[-1] or e.startswith("email_not_unlocked")
+
+
+def _extract_phone(person: dict) -> str | None:
+    """Pull a usable phone from an Apollo person/match payload, if present."""
+    for pn in (person.get("phone_numbers") or []):
+        num = pn.get("sanitized_number") or pn.get("raw_number")
+        if num:
+            return num
+    org = person.get("organization") or {}
+    return org.get("sanitized_phone") or org.get("phone") or None
+
+
+# ── People Match (unlock) — budget-capped per process ─────────────────────────
+_unlock_count = 0
+
+
+def unlock(apollo_id: str, linkedin_url: str | None = None) -> dict | None:
+    """Reveal the real email (+ phone if available) behind a masked search result.
+
+    Consumes one Apollo credit per call, so it's hard-capped by APOLLO_UNLOCK_BUDGET
+    and gated by APOLLO_UNLOCK_ENABLED. Returns {"email", "email_status", "phone"}
+    or None when disabled / out of budget / on error.
+    """
+    global _unlock_count
+    if not settings.APOLLO_API_KEY or not settings.APOLLO_UNLOCK_ENABLED:
+        return None
+    if _unlock_count >= settings.APOLLO_UNLOCK_BUDGET:
+        log.info("[apollo] unlock budget exhausted for this process — skipping")
+        return None
+    if not apollo_id and not linkedin_url:
+        return None
+
+    headers = {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": settings.APOLLO_API_KEY,
+    }
+    payload: dict = {"reveal_personal_emails": True}
+    if apollo_id:
+        payload["id"] = apollo_id
+    if linkedin_url:
+        payload["linkedin_url"] = linkedin_url
+
+    try:
+        r = httpx.post(f"{_BASE}/people/match", json=payload, headers=headers, timeout=15)
+        _unlock_count += 1
+        if r.status_code != 200:
+            log.warning(f"[apollo] unlock failed ({r.status_code}): {r.text[:200]}")
+            return None
+        person = r.json().get("person") or {}
+        email = person.get("email")
+        if _is_masked(email):
+            email = None
+        return {
+            "email": email,
+            "email_status": person.get("email_status", ""),
+            "phone": _extract_phone(person),
+        }
+    except Exception as e:
+        log.warning(f"[apollo] unlock error: {e}")
+        return None
+
 
 def _build_person_params(icp_params: dict, page: int = 1) -> dict:
     """Convert ICP params to Apollo People Search parameters."""
@@ -109,11 +178,15 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                 break
 
             for person in people:
-                # Extract verified email
+                # Extract verified email — search results are usually masked
+                # (`email_not_unlocked@…`); enrich_lead() will call unlock() to reveal.
                 email = person.get("email") or ""
                 email_status = person.get("email_status", "")
-                if email_status not in ("verified", "likely to engage", ""):
+                if _is_masked(email):
+                    email = ""
+                elif email_status not in ("verified", "likely to engage", ""):
                     email = ""  # don't use bounced/invalid
+                phone = _extract_phone(person)
 
                 linkedin_url = person.get("linkedin_url") or ""
                 if linkedin_url and not linkedin_url.startswith("http"):
@@ -139,6 +212,8 @@ def fetch(icp_params: dict, limit: int = 50) -> list[dict]:
                     "person_email": email or None,
                     "email_verified": email_status == "verified",
                     "email_source": "apollo" if email else None,
+                    "person_phone": phone,
+                    "phone_source": "apollo" if phone else None,
                     "person_linkedin_url": linkedin_url or None,
                     "person_location": person.get("city") or person.get("state"),
                     "company_name": company_name or None,

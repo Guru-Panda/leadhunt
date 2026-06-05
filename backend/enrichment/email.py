@@ -9,7 +9,7 @@ import dns.resolver
 import httpx
 from selectolax.parser import HTMLParser
 
-from backend.enrichment.extractors import extract_emails_from_text, scrape_company_emails
+from backend.enrichment.extractors import extract_emails_from_text, scrape_company_contacts
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +20,75 @@ SMTP_TIMEOUT = 5
 def is_noreply(email: str) -> bool:
     prefix = email.split("@")[0].lower()
     return any(k in prefix for k in ["noreply", "no-reply", "notifications", "support", "info", "hello", "team"])
+
+
+# ── Free MX-existence gate ────────────────────────────────────────────────────
+# Port-25 SMTP RCPT is blocked on most networks (Windows dev, Railway), so the
+# only free deliverability signal we can trust is whether the domain even has a
+# mail server. We refuse to save guessed/scraped emails on domains with no MX.
+_mx_cache: dict[str, bool] = {}
+
+
+def _normalize_domain(domain: str | None) -> str | None:
+    if not domain:
+        return None
+    d = domain.strip().lower()
+    if "://" in d:
+        d = urlparse(d).netloc
+    d = d.lstrip("www.").rstrip("/").split("/")[0]
+    return d or None
+
+
+def domain_has_mx(domain: str | None) -> bool:
+    """True if the domain publishes an MX (or fallback A) record — cached per process.
+
+    Conservative on lookup failure: returns True so a transient DNS error never
+    silently drops an otherwise-good email.
+    """
+    d = _normalize_domain(domain)
+    if not d or "." not in d:
+        return False
+    if d in _mx_cache:
+        return _mx_cache[d]
+    try:
+        answers = dns.resolver.resolve(d, "MX")
+        ok = len(answers) > 0
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        # No MX — RFC 5321 allows falling back to an A record for mail.
+        try:
+            dns.resolver.resolve(d, "A")
+            ok = True
+        except Exception:
+            ok = False
+    except Exception as e:
+        log.debug(f"MX lookup failed for {d}: {e}")
+        ok = True  # transient failure — don't penalise the lead
+    _mx_cache[d] = ok
+    return ok
+
+
+# ── Graded email confidence (0.0–1.0) ─────────────────────────────────────────
+# How reachable is this email, by how we found it. Verified hits and explicitly
+# published addresses rank highest; unverified pattern guesses rank lowest.
+_CONFIDENCE_BY_SOURCE: dict[str, float] = {
+    "source_text": 0.92,      # the person posted it publicly themselves
+    "company_site": 0.85,     # listed on the company's own site
+    "github_commit": 0.85,    # from their own commits
+    "apollo": 0.9,            # Apollo verified contact DB
+    "hunter": 0.8,           # Hunter finder (confidence-scored)
+    "hunter_verified": 0.9,   # Hunter verifier said valid
+    "whois": 0.65,            # domain registrant — may be an agent/privacy proxy
+    "pattern_guess": 0.35,    # heuristic guess
+}
+
+
+def compute_email_confidence(source: str | None, verified: bool, has_mx: bool) -> float:
+    base = _CONFIDENCE_BY_SOURCE.get(source or "", 0.5)
+    if verified:
+        base = max(base, 0.9)
+    if not has_mx:
+        base = min(base, 0.2)  # domain can't receive mail — heavily discount
+    return round(base, 2)
 
 
 def smtp_verify(email: str) -> bool:
@@ -292,13 +361,29 @@ def find_linkedin_url(name: str, company: str | None = None, title: str | None =
     return None
 
 
+def _finalize(lead_draft: dict) -> dict:
+    """Stamp a graded email_confidence based on how the email was found + MX check."""
+    email = lead_draft.get("person_email")
+    if email:
+        has_mx = domain_has_mx(email.split("@")[-1])
+        lead_draft["email_confidence"] = compute_email_confidence(
+            lead_draft.get("email_source"), bool(lead_draft.get("email_verified")), has_mx
+        )
+    else:
+        lead_draft.setdefault("email_confidence", 0.0)
+    return lead_draft
+
+
 def enrich_lead(lead_draft: dict) -> dict:
-    """Layered email discovery. Each path is short-circuit, ordered by signal strength:
-      1. Email already on the lead (from source extraction) — verify if possible
-      2. Scrape company website mailto links (great for SMB founders)
+    """Layered email + phone discovery. Each path is short-circuit, ordered by signal strength:
+      1. Email already on the lead (from source extraction)
+      1b. Apollo People Match unlock (reveals the real email/phone behind a masked search hit)
+      2. Scrape company website mailto/tel links (great for SMB founders)
+      2b. WHOIS/RDAP registrant email
       3. GitHub commit emails (gold for OSS folk)
-      4. Best-guess pattern (mark unverified) — last resort for outreach
-      5. Hunter.io (if quota available, for high-intent leads)
+      4. Hunter.io finder (if quota available)
+      5. Best-guess pattern — last resort, gated on the domain having an MX record
+    Every returned lead carries a graded `email_confidence` (0.0–1.0).
     """
     verifies_done = 0
     name = lead_draft.get("person_name", "")
@@ -310,11 +395,34 @@ def enrich_lead(lead_draft: dict) -> dict:
         if not is_noreply(email):
             lead_draft.setdefault("email_verified", False)
             lead_draft.setdefault("email_source", "source_text")
-            return lead_draft
+            return _finalize(lead_draft)
+
+    # ── 1b. Apollo unlock — search results come back masked (email_not_unlocked@…).
+    #        The People Match endpoint reveals the real email (+ phone). Budget-capped.
+    if lead_draft.get("source") == "apollo":
+        apollo_id = (lead_draft.get("raw_data") or {}).get("apollo_id")
+        if apollo_id or lead_draft.get("person_linkedin_url"):
+            from backend.sources.apollo import unlock as apollo_unlock
+            unlocked = apollo_unlock(apollo_id, lead_draft.get("person_linkedin_url"))
+            if unlocked:
+                if unlocked.get("phone") and not lead_draft.get("person_phone"):
+                    lead_draft["person_phone"] = unlocked["phone"]
+                    lead_draft["phone_source"] = "apollo"
+                em = unlocked.get("email")
+                if em and not is_noreply(em):
+                    lead_draft["person_email"] = em
+                    lead_draft["email_verified"] = unlocked.get("email_status") == "verified"
+                    lead_draft["email_source"] = "apollo"
+                    return _finalize(lead_draft)
 
     # ── 2. Scrape the company's site (only if we have a real, source-set domain)
     if domain and "." in domain:
-        company_emails = scrape_company_emails(domain)
+        contacts = scrape_company_contacts(domain)
+        company_emails = contacts.get("emails") or []
+        company_phones = contacts.get("phones") or []
+        if company_phones and not lead_draft.get("person_phone"):
+            lead_draft["person_phone"] = company_phones[0]
+            lead_draft["phone_source"] = "company_site"
         if company_emails:
             picked = _pick_personal_email(company_emails, name)
             if picked:
@@ -322,7 +430,7 @@ def enrich_lead(lead_draft: dict) -> dict:
                 lead_draft["email_verified"] = False
                 lead_draft["email_source"] = "company_site"
                 lead_draft.setdefault("raw_data", {})["all_company_emails"] = company_emails
-                return lead_draft
+                return _finalize(lead_draft)
 
     # ── 2b. WHOIS / RDAP registrant email
     if domain and "." in domain:
@@ -335,7 +443,7 @@ def enrich_lead(lead_draft: dict) -> dict:
                 lead_draft["email_verified"] = False
                 lead_draft["email_source"] = "whois"
                 lead_draft.setdefault("raw_data", {})["whois"] = whois_data
-                return lead_draft
+                return _finalize(lead_draft)
 
     # ── 3. GitHub commit emails (skip for HN/Reddit speculative URLs)
     is_speculative_github = lead_draft.get("source") in ("hackernews", "reddit")
@@ -347,7 +455,7 @@ def enrich_lead(lead_draft: dict) -> dict:
                 lead_draft["person_email"] = picked
                 lead_draft["email_verified"] = False
                 lead_draft["email_source"] = "github_commit"
-                return lead_draft
+                return _finalize(lead_draft)
 
     # ── 4. Hunter.io BEFORE pattern guess (more reliable when available)
     #       Quota-guarded: only fires while free-tier searches remain above buffer.
@@ -357,12 +465,14 @@ def enrich_lead(lead_draft: dict) -> dict:
             lead_draft["person_email"] = email
             lead_draft["email_verified"] = verified
             lead_draft["email_source"] = "hunter"
-            return lead_draft
+            return _finalize(lead_draft)
 
     # ── 5. Best-guess pattern — last resort. Try to VERIFY the guess for free
     #       via Hunter's verifier (separate 50/mo quota) so a confirmed guess
     #       becomes a real verified email instead of a shot in the dark.
-    if name and domain:
+    #       Skip entirely when the domain has no mail server — a guess there is
+    #       guaranteed undeliverable, so it would only pollute the lead list.
+    if name and domain and domain_has_mx(domain):
         guess = best_guess_email(name, domain)
         if guess:
             verdict = hunter_verify(guess)
@@ -390,4 +500,4 @@ def enrich_lead(lead_draft: dict) -> dict:
             lead_draft["person_linkedin_url"] = li_url
             log.debug(f"LinkedIn URL enriched for {name!r}: {li_url}")
 
-    return lead_draft
+    return _finalize(lead_draft)

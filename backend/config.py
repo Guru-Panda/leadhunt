@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     STACKOVERFLOW_KEY: str = ""  # optional — raises SO API from 300 to 10,000 req/day
     COMPANIES_HOUSE_KEY: str = ""  # free signup at developer.company-information.service.gov.uk
     APOLLO_API_KEY: str = ""  # apollo.io — 275M contacts, verified emails. Free: 50 exports/mo
+    # Apollo People Match (enrich) — unlocks the REAL email/phone behind a search
+    # result's `email_not_unlocked@…` placeholder. Each call consumes an Apollo
+    # credit, so it's budget-capped per process. Set ENABLED=false to never spend.
+    APOLLO_UNLOCK_ENABLED: bool = True
+    APOLLO_UNLOCK_BUDGET: int = 25  # max match/unlock calls per process run
 
     # Email delivery — four tiers, tried in order:
     # 1. Brevo (HTTPS, 300/day free, sender-email verification only — RECOMMENDED if no domain)
