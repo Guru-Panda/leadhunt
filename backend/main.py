@@ -121,7 +121,7 @@ def system_source_test(key: str = "", sources: str = ""):
     import time as _t
 
     from backend.config import settings as s
-    if key not in (s.ADMIN_KEY, "leadhunt-diag-2026-temp"):  # temp diag token; removed after
+    if key != s.ADMIN_KEY:
         raise HTTPException(status_code=403, detail="bad admin key")
 
     from backend.search_providers import search_status, web_search

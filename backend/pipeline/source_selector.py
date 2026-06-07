@@ -26,6 +26,10 @@ log = logging.getLogger(__name__)
 # Sources that only make sense for a technical/developer audience.
 DEV_ONLY = {"github", "stackoverflow", "devto"}
 
+# API-based sources that work from a datacenter IP without a search key — the only
+# sources guaranteed to return data in production (web-search engines block servers).
+DATACENTER_OK = ["hackernews", "stackoverflow", "devto", "github"]
+
 # Vertical → ordered preferred source names (best fit first). Reflects WHERE that
 # kind of buyer congregates online.
 VERTICAL_SOURCES: dict[str, list[str]] = {
@@ -108,6 +112,12 @@ def select_source_names(strategy) -> tuple[list[str], str]:
     if not names:
         names = [n for n in heuristic_sources(strategy) if n in available]
         reason = f"heuristic:{vertical}"
+
+    # Always include the API-based sources that work from a DATACENTER IP without a
+    # search key (hackernews/stackoverflow/devto/github). Web-search engines block
+    # server IPs, so in production these are often the ONLY sources that return data.
+    # (Dev-only ones are stripped just below for non-tech verticals.)
+    names = names + [n for n in DATACENTER_OK if n in available]
 
     # Hard guard: never scrape developer-only sources for a non-tech business.
     if vertical in ("consumer_local", "professional"):
