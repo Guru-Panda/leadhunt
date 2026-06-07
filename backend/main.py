@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -110,6 +110,53 @@ def system_health():
     from backend.llm import llm_status
     from backend.search_providers import search_status
     return {"llm": llm_status(), "search": search_status()}
+
+
+@app.get("/system/source-test")
+def system_source_test(key: str = "", sources: str = ""):
+    """Diagnostic (ADMIN_KEY-gated): run sources FROM THIS SERVER'S IP and report
+    per-source lead counts + errors, plus a direct web-search probe. Lets us see
+    exactly which sources actually work in production (datacenter IPs get blocked
+    by some search engines)."""
+    import time as _t
+
+    from backend.config import settings as s
+    if key != s.ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="bad admin key")
+
+    from backend.search_providers import search_status, web_search
+    result: dict = {"search_status": search_status()}
+
+    t = _t.time()
+    try:
+        r = web_search("b2b saas company hiring", 3)
+        result["_web_search"] = {
+            "count": len(r),
+            "first_url": (r[0]["url"] if r else None),
+            "ms": int((_t.time() - t) * 1000),
+        }
+    except Exception as e:
+        result["_web_search"] = {"error": str(e)[:200]}
+
+    icp = {
+        "target_roles": ["CTO", "Founder"], "target_industries": ["software"], "industries": ["software"],
+        "buyer_phrases": ["looking for a CRM"], "buyer_intent_keywords": ["crm"], "keywords": ["saas"],
+        "_main_problem": "we sell a CRM", "_ideal_customer": "SaaS founders",
+        "target_locations": [], "competitors": [],
+    }
+    import backend.sources as sp
+    want = [x.strip() for x in sources.split(",") if x.strip()] or \
+        ["hackernews", "stackoverflow", "devto", "github", "linkedin", "bing"]
+    for m in sp.BASE_SOURCES:
+        if m.NAME not in want:
+            continue
+        t = _t.time()
+        try:
+            leads = m.fetch(icp, limit=2)
+            result[m.NAME] = {"count": len(leads), "ms": int((_t.time() - t) * 1000)}
+        except Exception as e:
+            result[m.NAME] = {"error": str(e)[:200]}
+    return result
 
 
 @app.get("/")
