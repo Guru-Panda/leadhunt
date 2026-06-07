@@ -40,11 +40,22 @@ async def _send_fresh_otp(email: str, db: Session) -> str:
     return code
 
 
+def _email_configured() -> bool:
+    """True if ANY real email delivery channel is set up."""
+    return bool(
+        settings.BREVO_API_KEY
+        or settings.RESEND_API_KEY
+        or (settings.SMTP_USER and settings.SMTP_PASSWORD)
+    )
+
+
 def _otp_response(detail: str, code: str) -> dict:
     body: dict = {"detail": detail}
-    if settings.DEV_MODE:
-        # Surface the code in the response so devs can complete signup
-        # without configuring SMTP. Frontend should display this prominently.
+    # Surface the code in the response when DEV_MODE is on, OR when no email
+    # provider is configured at all (otherwise the OTP is undeliverable and signup
+    # would dead-end). Once Brevo/Resend/SMTP is configured AND DEV_MODE is off,
+    # the code is no longer exposed — the secure production path.
+    if settings.DEV_MODE or not _email_configured():
         body["dev_otp"] = code
     return body
 
