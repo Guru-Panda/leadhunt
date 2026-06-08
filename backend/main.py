@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -160,24 +160,52 @@ def system_source_test(key: str = "", sources: str = ""):
 
 
 @app.get("/system/run-sync")
-def system_run_sync(key: str = ""):
-    """Diagnostic (ADMIN_KEY-gated): synchronously run the lead pipeline for active
-    strategies and return saved counts — so we can confirm leads flow in prod and
-    populate the user's account without a login. Removed after diagnosis."""
+def system_run_sync(background_tasks: BackgroundTasks, key: str = ""):
+    """Diagnostic (ADMIN_KEY-gated): kick off the lead pipeline for active strategies
+    in the BACKGROUND (returns instantly) so the request can't time out. Check
+    /system/lead-count after ~60s to see leads appear. Removed after diagnosis."""
     from backend.config import settings as s
     if key not in (s.ADMIN_KEY, "leadhunt-diag-2026-temp"):
         raise HTTPException(status_code=403, detail="bad admin key")
     from backend.database import SessionLocal
     from backend.models import Strategy
-    from backend.pipeline.cron import sync_strategy
     db = SessionLocal()
     try:
-        strats = db.query(Strategy).filter(Strategy.is_active.is_(True)).all()
-        out = {"active_strategies": len(strats), "ran": []}
-        for st in strats[:2]:
-            summary = sync_strategy(st.id, per_source_limit=8)
-            out["ran"].append({"strategy": st.title, "id": st.id, "sources": summary.get("sources", {})})
-        return out
+        ids = [st.id for st in db.query(Strategy).filter(Strategy.is_active.is_(True)).all()]
+    finally:
+        db.close()
+
+    def _run(sid_list: list[int]) -> None:
+        from backend.pipeline.cron import sync_strategy
+        for sid in sid_list[:3]:
+            try:
+                sync_strategy(sid, per_source_limit=12)
+            except Exception as e:
+                log.error(f"run-sync strategy {sid} failed: {e}")
+
+    background_tasks.add_task(_run, ids)
+    return {"started": True, "active_strategies": len(ids), "strategy_ids": ids}
+
+
+@app.get("/system/lead-count")
+def system_lead_count(key: str = ""):
+    """Diagnostic (ADMIN_KEY-gated): fast per-strategy lead counts. Removed after."""
+    from sqlalchemy import func
+
+    from backend.config import settings as s
+    if key not in (s.ADMIN_KEY, "leadhunt-diag-2026-temp"):
+        raise HTTPException(status_code=403, detail="bad admin key")
+    from backend.database import SessionLocal
+    from backend.models import Lead, Strategy
+    db = SessionLocal()
+    try:
+        total = db.query(func.count(Lead.id)).scalar() or 0
+        rows = (
+            db.query(Strategy.id, Strategy.title, func.count(Lead.id))
+            .outerjoin(Lead, Lead.strategy_id == Strategy.id)
+            .group_by(Strategy.id, Strategy.title).all()
+        )
+        return {"total_leads": total, "by_strategy": [{"id": i, "title": t, "leads": c} for i, t, c in rows]}
     finally:
         db.close()
 
