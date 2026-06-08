@@ -58,6 +58,19 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
 ]
 
 
+# Backfill NULLs on columns added to EXISTING rows (JSONB has no DEFAULT, so old
+# rows get NULL after ALTER — which then breaks Pydantic list/dict serialization).
+# (table, column, sqlite_value, postgres_value). Idempotent: only touches NULLs.
+_BACKFILLS: list[tuple[str, str, str, str]] = [
+    ("leadhunt_strategies", "target_websites",  "'[]'", "'[]'::jsonb"),
+    ("leadhunt_strategies", "event_keywords",   "'[]'", "'[]'::jsonb"),
+    ("leadhunt_strategies", "learning_profile", "'{}'", "'{}'::jsonb"),
+    ("leadhunt_strategies", "competitors",      "'[]'", "'[]'::jsonb"),
+    ("leadhunt_strategies", "webinars_enabled", "1",    "TRUE"),
+    ("leadhunt_strategies", "events_enabled",   "1",    "TRUE"),
+]
+
+
 def run_inline_migrations(engine: Engine) -> None:
     dialect = engine.dialect.name
     inspector = inspect(engine)
@@ -78,5 +91,20 @@ def run_inline_migrations(engine: Engine) -> None:
                 log.info(f"Migration: added {table}.{column} ({ddl_type})")
             except Exception as e:
                 log.warning(f"Migration skipped for {table}.{column}: {e}")
+
+        # Backfill NULLs left by past ALTERs on existing rows.
+        for table, column, sqlite_val, pg_val in _BACKFILLS:
+            if table not in inspector.get_table_names():
+                continue
+            if column not in {c["name"] for c in inspector.get_columns(table)}:
+                continue
+            val = sqlite_val if dialect == "sqlite" else pg_val
+            try:
+                result = conn.execute(text(f"UPDATE {table} SET {column} = {val} WHERE {column} IS NULL"))
+                if result.rowcount:
+                    log.info(f"Backfill: set {result.rowcount} NULL {table}.{column} → {val}")
+            except Exception as e:
+                log.warning(f"Backfill skipped for {table}.{column}: {e}")
+
     if added:
         log.info(f"Inline migrations: applied {added} schema change(s)")

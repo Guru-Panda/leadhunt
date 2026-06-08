@@ -133,6 +133,23 @@ class StrategyOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    # Columns added by migration on existing rows are NULL (JSONB has no default);
+    # coerce None → empty so serialization never fails for pre-migration strategies.
+    @field_validator("target_websites", "event_keywords", mode="before")
+    @classmethod
+    def _none_to_list(cls, v: Any) -> Any:
+        return v if v is not None else []
+
+    @field_validator("learning_profile", "raw_icp_params", mode="before")
+    @classmethod
+    def _none_to_dict(cls, v: Any) -> Any:
+        return v if v is not None else {}
+
+    @field_validator("webinars_enabled", "events_enabled", mode="before")
+    @classmethod
+    def _none_to_true(cls, v: Any) -> Any:
+        return True if v is None else v
+
 
 # ── Lead ──────────────────────────────────────────────────────────────────────
 
