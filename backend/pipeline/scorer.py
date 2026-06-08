@@ -4,8 +4,26 @@ import logging
 import re
 
 from backend.llm import llm_json
+from backend.pipeline import learning
 
 log = logging.getLogger(__name__)
+
+
+def _apply_learning(result: dict, lead: dict, strategy) -> dict:
+    """Nudge a scored result by the strategy's learned approve/reject preferences.
+
+    Bounded (±0.15) and re-derives the signal label so the UI stays consistent.
+    No-op until the user has rated a few leads.
+    """
+    profile = getattr(strategy, "learning_profile", None)
+    delta = learning.score_adjustment(lead, profile)
+    if not delta:
+        return result
+    new_score = max(0.0, min(1.0, result.get("intent_score", 0.0) + delta))
+    result["intent_score"] = new_score
+    result["signal_label"] = _signal_label(new_score)
+    result["learning_delta"] = round(delta, 3)
+    return result
 
 
 def _signal_label(score: float) -> str:
@@ -179,7 +197,7 @@ def score_lead_smart(lead: dict, strategy, allow_llm: bool = True) -> dict:
             if isinstance(k, str) and k.strip() and k.strip().lower() in content_lower
         ][:3]
 
-        return {
+        return _apply_learning({
             "intent_score": score,
             "reasoning": summary,
             "intent_signals": signals,
@@ -187,7 +205,7 @@ def score_lead_smart(lead: dict, strategy, allow_llm: bool = True) -> dict:
             "matched_keywords": _compute_matched_keywords(content, icp.get("buyer_intent_keywords", []) or []),
             "ai_summary": summary,
             "signal_label": _signal_label(score),
-        }
+        }, lead, strategy)
 
     # Profile-based and everything else → ICP-fit scoring
     return score_lead(lead, strategy, allow_llm=allow_llm)
@@ -210,7 +228,7 @@ def score_leads_batch(leads: list[dict], strategy, allow_llm: bool = True) -> li
     if not leads:
         return []
     if not allow_llm:
-        return [_heuristic_score(l, _lead_content(l), icp) for l in leads]
+        return [_apply_learning(_heuristic_score(l, _lead_content(l), icp), l, strategy) for l in leads]
 
     intent_kws = icp.get("buyer_intent_keywords", []) or []
     entries = "\n\n".join(
@@ -229,7 +247,7 @@ OUR ICP:
 
 ENTRIES:
 {entries}
-
+{learning.prompt_hint(getattr(strategy, "learning_profile", None))}
 Return ONLY a JSON list — exactly one object per entry index:
 [{{"i": 0, "intent_score": 0.0, "summary": "one sentence referencing what they said", "signals": ["tag"]}}]
 Scoring: 0.8-1.0 = clear buyer intent; 0.5-0.7 = solid role/industry fit; 0.3-0.5 = weak; 0.0-0.2 = off-topic. Be rigorous."""
@@ -246,17 +264,17 @@ Scoring: 0.8-1.0 = clear buyer intent; 0.5-0.7 = solid role/industry fit; 0.3-0.
                         continue
     except Exception as e:
         log.warning(f"batch scoring failed ({e}) — heuristic fallback for {len(leads)} leads")
-        return [_heuristic_score(l, _lead_content(l), icp) for l in leads]
+        return [_apply_learning(_heuristic_score(l, _lead_content(l), icp), l, strategy) for l in leads]
 
     out: list[dict] = []
     for i, l in enumerate(leads):
         o = by_i.get(i)
         content = _lead_content(l)
         if not o:
-            out.append(_heuristic_score(l, content, icp))
+            out.append(_apply_learning(_heuristic_score(l, content, icp), l, strategy))
             continue
         score = max(0.0, min(1.0, float(o.get("intent_score", 0.0) or 0.0)))
-        out.append({
+        out.append(_apply_learning({
             "intent_score": score,
             "reasoning": o.get("summary", ""),
             "intent_signals": o.get("signals") or l.get("intent_signals", []),
@@ -264,7 +282,7 @@ Scoring: 0.8-1.0 = clear buyer intent; 0.5-0.7 = solid role/industry fit; 0.3-0.
             "matched_keywords": _compute_matched_keywords(content, intent_kws),
             "ai_summary": o.get("summary", ""),
             "signal_label": _signal_label(score),
-        })
+        }, l, strategy))
     return out
 
 
@@ -370,7 +388,7 @@ def score_lead(lead: dict, strategy, allow_llm: bool = True) -> dict:
 
     if not allow_llm:
         # LLM budget exhausted / rate-limited — heuristic without burning a call.
-        return _heuristic_score(lead, full_content, strategy.raw_icp_params or {})
+        return _apply_learning(_heuristic_score(lead, full_content, strategy.raw_icp_params or {}), lead, strategy)
 
     intent_keywords = []
     if strategy.raw_icp_params:
@@ -394,7 +412,7 @@ OUR ICP:
 - We solve: {strategy.main_problem}
 - Ideal customer: {strategy.ideal_customer}
 - Target roles: {strategy.target_roles}
-- Target industries: {strategy.target_industries}{intent_block}
+- Target industries: {strategy.target_industries}{intent_block}{learning.prompt_hint(getattr(strategy, "learning_profile", None))}
 
 THIS PERSON:
 - Name: {lead.get('person_name')}
@@ -439,7 +457,7 @@ RULES:
             if isinstance(p, str) and p.strip() and p.strip().lower() in content_lower
         ][:3]
 
-        return {
+        return _apply_learning({
             "intent_score": score,
             "reasoning": result.get("ai_summary", ""),
             "intent_signals": result.get("intent_signals", []) or lead.get("intent_signals", []),
@@ -447,10 +465,10 @@ RULES:
             "matched_keywords": _compute_matched_keywords(full_content, intent_keywords),
             "ai_summary": result.get("ai_summary", ""),
             "signal_label": _signal_label(score),
-        }
+        }, lead, strategy)
     except Exception as e:
         # LLM unavailable (often Groq daily token cap). Fall back to a keyword
         # heuristic so relevant leads still survive instead of all scoring 0.4.
         log.warning(f"LLM scoring failed for {lead.get('person_name')} ({e}) — using heuristic fallback")
         icp = strategy.raw_icp_params or {}
-        return _heuristic_score(lead, full_content, icp)
+        return _apply_learning(_heuristic_score(lead, full_content, icp), lead, strategy)

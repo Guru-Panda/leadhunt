@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from backend import credits as credits_svc
@@ -151,49 +151,70 @@ def export_csv(
 # ── Literal-path routes FIRST (FastAPI matches in declaration order — without
 # this, `/leads/{lead_id}` would catch `/leads/unwanted-count` first)
 
-def _unwanted_query(db: Session, user_id: int, strategy_id: int):
-    """Leads the user has actively rejected: thumbs-down (feedback==-1) OR status=='rejected'."""
-    return (
-        db.query(Lead)
-        .filter(
-            Lead.user_id == user_id,
-            Lead.strategy_id == strategy_id,
-            or_(Lead.feedback == -1, Lead.status == "rejected"),
+# A lead is "approved" if the user positively engaged with it: thumbs-up
+# (feedback==1) OR a forward-moving status (qualified / contacted / liked / won).
+# Shared with the learning loop so the definition stays in one place.
+from backend.pipeline.learning import _APPROVE_STATUSES
+
+
+def _purge_query(db: Session, user_id: int, strategy_id: int, scope: str):
+    """Leads eligible for deletion under the given scope.
+
+    - "unwanted"   → only leads the user actively rejected (feedback==-1 / rejected).
+    - "unapproved" → EVERYTHING the user hasn't approved (incl. untouched 'new',
+                     ignored, and rejected) — used by a fresh refresh that clears
+                     the board except for leads you've kept.
+    """
+    base = db.query(Lead).filter(Lead.user_id == user_id, Lead.strategy_id == strategy_id)
+    if scope == "unapproved":
+        approve_statuses = list(_APPROVE_STATUSES)
+        # coalesce() so NULL feedback / status don't fall into SQL three-valued
+        # logic and silently survive the delete.
+        return base.filter(
+            and_(
+                func.coalesce(Lead.feedback, 0) != 1,
+                func.coalesce(Lead.status, "new").notin_(approve_statuses),
+            )
         )
-    )
+    return base.filter(or_(Lead.feedback == -1, Lead.status == "rejected"))
 
 
 @router.get("/unwanted-count")
 def unwanted_count(
     strategy_id: int = Query(...),
+    scope: str = Query(default="unwanted"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Count leads that would be purged by /leads/purge?strategy_id=X."""
+    """Count leads that would be purged by /leads/purge with the same scope."""
     s = db.get(Strategy, strategy_id)
     if not s or s.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Strategy not found.")
-    count = _unwanted_query(db, current_user.id, strategy_id).count()
+    count = _purge_query(db, current_user.id, strategy_id, scope).count()
     return {"count": count}
 
 
 @router.delete("/purge", status_code=200)
 def purge_unwanted(
     strategy_id: int = Query(...),
+    scope: str = Query(default="unwanted"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete all leads for this strategy that are disliked (feedback==-1) or rejected.
+    """Delete leads for this strategy under `scope`.
 
-    Keeps liked, contacted, qualified, ignored, and untouched 'new' leads.
+    - scope="unwanted" (default): removes disliked/rejected leads only; keeps
+      liked, contacted, qualified, ignored, and untouched 'new'.
+    - scope="unapproved": removes everything EXCEPT approved leads (feedback==1
+      or status qualified/contacted/liked/won) — clears the board for a fresh hunt.
     """
     s = db.get(Strategy, strategy_id)
     if not s or s.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Strategy not found.")
-    q = _unwanted_query(db, current_user.id, strategy_id)
+    q = _purge_query(db, current_user.id, strategy_id, scope)
     deleted = q.delete(synchronize_session=False)
     db.commit()
-    log.info(f"Purged {deleted} unwanted leads from strategy {strategy_id}")
+    log.info(f"Purged {deleted} leads from strategy {strategy_id} (scope={scope})")
     return {"deleted": deleted}
 
 
@@ -226,6 +247,16 @@ def update_lead_status(
         lead.feedback = body.feedback
     db.commit()
     db.refresh(lead)
+
+    # Learn from this approve/reject so future hunts drift toward what the user keeps.
+    try:
+        strategy = db.get(Strategy, lead.strategy_id)
+        if strategy:
+            from backend.pipeline.learning import update_learning_profile
+            update_learning_profile(strategy, db)
+    except Exception as e:
+        log.warning(f"learning profile update failed for strategy {lead.strategy_id}: {e}")
+
     return lead
 
 

@@ -60,14 +60,21 @@ export default function OpportunitiesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {items.map((ev) => {
             const url = (ev.raw_data?.event_url as string) || ev.source_url || ''
+            const isWebinar = (ev.intent_signals || []).includes('webinar_opportunity')
+            const snippet = (ev.source_snippet || '').replace(/^[💻📅]\s*(Global online webinar|In-person event|Event opportunity):\s*/, '')
             return (
               <div key={ev.id} className="card flex flex-col">
                 <div className="flex items-start gap-2 mb-2">
                   <Calendar className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                  <div className="font-semibold text-gray-900 leading-snug">{ev.person_name}</div>
+                  <div className="flex-1">
+                    <div className="font-semibold text-gray-900 leading-snug">{ev.person_name}</div>
+                    <span className={`inline-block mt-1 px-2 py-0.5 rounded text-[11px] font-medium ${isWebinar ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'}`}>
+                      {isWebinar ? '💻 Webinar · Global' : '📍 In-person event'}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-sm text-gray-600 flex-1 whitespace-pre-wrap">
-                  {(ev.source_snippet || '').replace('📅 Event opportunity: ', '').slice(0, 240)}
+                  {snippet.slice(0, 240)}
                 </p>
                 {url && (
                   <a

@@ -77,12 +77,32 @@ class StrategyCreate(BaseModel):
     target_locations: list[str] = []
     target_company_size: list[str] = []
     competitors: list[str] = []
+    target_websites: list[str] = []
+    event_keywords: list[str] = []
+    webinars_enabled: bool = True
+    events_enabled: bool = True
     intent_threshold: float = 0.5
 
     @field_validator("intent_threshold")
     @classmethod
     def clamp_threshold(cls, v: float) -> float:
         return max(0.3, min(0.9, v))
+
+    @field_validator("target_websites")
+    @classmethod
+    def clean_websites(cls, v: list[str]) -> list[str]:
+        """Normalise to bare domains (strip scheme / path / www / trailing slash)."""
+        out: list[str] = []
+        for raw in v or []:
+            d = (raw or "").strip().lower()
+            if not d:
+                continue
+            d = d.split("://", 1)[-1].split("/", 1)[0]
+            if d.startswith("www."):
+                d = d[4:]
+            if d and d not in out:
+                out.append(d)
+        return out
 
 class StrategyUpdate(StrategyCreate):
     pass
@@ -100,6 +120,11 @@ class StrategyOut(BaseModel):
     target_roles: list[str]
     target_industries: list[str]
     competitors: list[str] | None = None
+    target_websites: list[str] = []
+    event_keywords: list[str] = []
+    webinars_enabled: bool = True
+    events_enabled: bool = True
+    learning_profile: dict[str, Any] = {}
     raw_icp_params: dict[str, Any]
     intent_threshold: float
     is_active: bool

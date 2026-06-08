@@ -21,6 +21,25 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _icp_for_fetch(strategy: Strategy) -> dict:
+    """Merge the LLM ICP params with the strategy's explicit, user-tunable columns.
+
+    The columns (toggles, websites, event keywords, locations) are the source of
+    truth and override anything stale in raw_icp_params, so sources see exactly
+    what the user configured in-app.
+    """
+    return {
+        **(strategy.raw_icp_params or {}),
+        "competitors": strategy.competitors or [],
+        "target_websites": strategy.target_websites or [],
+        "event_keywords": strategy.event_keywords or [],
+        "target_locations": strategy.target_locations or [],
+        "keywords": strategy.keywords or [],
+        "webinars_enabled": bool(getattr(strategy, "webinars_enabled", True)),
+        "events_enabled": bool(getattr(strategy, "events_enabled", True)),
+    }
+
+
 def dedupe_check(db: Session, user_id: int, source: str, external_id: str) -> bool:
     return db.query(Lead).filter(
         Lead.user_id == user_id,
@@ -240,7 +259,7 @@ def sync_strategy(strategy_id: int, source_names: list[str] | None = None, per_s
 
         from backend.llm import llm_status
         llm_scored = 0  # per-run LLM budget counter
-        icp_for_fetch = {**(strategy.raw_icp_params or {}), "competitors": strategy.competitors or []}
+        icp_for_fetch = _icp_for_fetch(strategy)
 
         for source_module in modules:
             run = SyncRun(strategy_id=strategy.id, source=source_module.NAME, status="running", started_at=now())
@@ -352,7 +371,7 @@ def hourly_sync() -> None:
 
         for strategy in strategies:
             llm_scored = 0  # per-strategy LLM budget counter
-            icp_for_fetch = {**(strategy.raw_icp_params or {}), "competitors": strategy.competitors or []}
+            icp_for_fetch = _icp_for_fetch(strategy)
             # Company-aware: hunt only where THIS business's buyers actually are.
             for source_module in select_source_modules(strategy):
                 run = SyncRun(

@@ -151,8 +151,16 @@ def delete_strategy(
     s = db.get(Strategy, strategy_id)
     if not s or s.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+
+    # Remove dependent rows first — leads/sync_runs/discovered_sources carry a
+    # non-nullable strategy_id FK, so deleting the strategy alone would fail on
+    # Postgres (and orphan rows on SQLite).
+    from backend.models import DiscoveredSource, Lead, SyncRun
+    for model in (Lead, SyncRun, DiscoveredSource):
+        db.query(model).filter(model.strategy_id == strategy_id).delete(synchronize_session=False)
     db.delete(s)
     db.commit()
+    log.info(f"Deleted strategy {strategy_id} and its dependent rows")
 
 
 @router.post("/{strategy_id}/toggle-active", response_model=StrategyOut)

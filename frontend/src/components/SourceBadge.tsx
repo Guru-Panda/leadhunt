@@ -14,6 +14,7 @@ const SOURCE_COLORS: Record<string, { bg: string; text: string; label: string }>
   jobs:          { bg: '#0a66c2', text: '#fff', label: 'Hiring' },
   competitor:    { bg: '#dc2626', text: '#fff', label: 'Switch' },
   events:        { bg: '#7c3aed', text: '#fff', label: 'Event' },
+  sites:         { bg: '#0d9488', text: '#fff', label: 'Site' },
 }
 
 function getDiscoveredColor() {

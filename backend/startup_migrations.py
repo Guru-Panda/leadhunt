@@ -49,6 +49,12 @@ _MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("leadhunt_leads", "is_unlocked",        "INTEGER DEFAULT 0",    "BOOLEAN DEFAULT FALSE"),
     # Competitor switch-intent (Phase 2)
     ("leadhunt_strategies", "competitors",   "TEXT",                 "JSONB"),
+    # User-tunable targeting + feedback learning
+    ("leadhunt_strategies", "target_websites",  "TEXT",              "JSONB"),
+    ("leadhunt_strategies", "event_keywords",   "TEXT",              "JSONB"),
+    ("leadhunt_strategies", "webinars_enabled", "INTEGER DEFAULT 1", "BOOLEAN DEFAULT TRUE"),
+    ("leadhunt_strategies", "events_enabled",   "INTEGER DEFAULT 1", "BOOLEAN DEFAULT TRUE"),
+    ("leadhunt_strategies", "learning_profile", "TEXT",              "JSONB"),
 ]
 
 

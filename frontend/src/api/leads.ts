@@ -77,11 +77,11 @@ export const leadsApi = {
   unlock: (id: number): Promise<{ data: { lead: Lead; charged: number; credits_remaining: number; billing_enabled: boolean } }> =>
     api.post(`/leads/${id}/unlock`),
 
-  unwantedCount: (strategy_id: number): Promise<{ data: { count: number } }> =>
-    api.get('/leads/unwanted-count', { params: { strategy_id } }),
+  unwantedCount: (strategy_id: number, scope: 'unwanted' | 'unapproved' = 'unwanted'): Promise<{ data: { count: number } }> =>
+    api.get('/leads/unwanted-count', { params: { strategy_id, scope } }),
 
-  purgeUnwanted: (strategy_id: number): Promise<{ data: { deleted: number } }> =>
-    api.delete('/leads/purge', { params: { strategy_id } }),
+  purgeUnwanted: (strategy_id: number, scope: 'unwanted' | 'unapproved' = 'unwanted'): Promise<{ data: { deleted: number } }> =>
+    api.delete('/leads/purge', { params: { strategy_id, scope } }),
 
   exportCsvUrl: (filters: LeadFilters = {}) => {
     const base = (import.meta.env.VITE_API_URL || '/api') + '/leads/export-csv'

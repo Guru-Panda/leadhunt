@@ -13,11 +13,27 @@ export interface Strategy {
   target_roles: string[]
   target_industries: string[]
   competitors: string[] | null
+  target_websites: string[]
+  event_keywords: string[]
+  webinars_enabled: boolean
+  events_enabled: boolean
+  learning_profile: LearningProfile
   raw_icp_params: Record<string, unknown>
   intent_threshold: number
   is_active: boolean
   created_at: string
   updated_at: string
+}
+
+export interface LearningProfile {
+  n_approved?: number
+  n_rejected?: number
+  liked_terms?: string[]
+  disliked_terms?: string[]
+  liked_sources?: string[]
+  disliked_sources?: string[]
+  liked_signals?: string[]
+  disliked_signals?: string[]
 }
 
 export interface StrategyCreate {
@@ -29,6 +45,10 @@ export interface StrategyCreate {
   target_locations: string[]
   target_company_size: string[]
   competitors: string[]
+  target_websites: string[]
+  event_keywords: string[]
+  webinars_enabled: boolean
+  events_enabled: boolean
   intent_threshold: number
 }
 

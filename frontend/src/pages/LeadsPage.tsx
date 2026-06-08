@@ -73,7 +73,7 @@ export default function LeadsPage() {
   const openRefreshDialog = async () => {
     if (!filters.strategy_id) return
     try {
-      const { data } = await leadsApi.unwantedCount(filters.strategy_id)
+      const { data } = await leadsApi.unwantedCount(filters.strategy_id, 'unapproved')
       setRefreshDialog({ open: true, unwantedCount: data.count })
     } catch (e: unknown) {
       // Gracefully degrade: open the dialog anyway with unknown count so the user
@@ -91,12 +91,12 @@ export default function LeadsPage() {
     setRefreshing(true)
     setRefreshDialog(null)
     try {
-      // Step 1: purge disliked + rejected
-      const { data: purged } = await leadsApi.purgeUnwanted(filters.strategy_id)
+      // Step 1: clear everything except approved leads
+      const { data: purged } = await leadsApi.purgeUnwanted(filters.strategy_id, 'unapproved')
       // Step 2: kick off a fresh sync (background)
       await strategyApi.syncNow(filters.strategy_id)
       setRefreshNotice(
-        `Removed ${purged.deleted} unwanted lead${purged.deleted === 1 ? '' : 's'}. ` +
+        `Cleared ${purged.deleted} lead${purged.deleted === 1 ? '' : 's'} (kept your approved ones). ` +
         `Hunting for new leads in the background — refresh in ~60s to see them.`
       )
       qc.invalidateQueries({ queryKey: ['leads'] })
@@ -278,7 +278,7 @@ export default function LeadsPage() {
               onClick={openRefreshDialog}
               disabled={!filters.strategy_id || refreshing}
               className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-              title={filters.strategy_id ? 'Remove unwanted leads + hunt for new ones' : 'Pick a strategy first'}
+              title={filters.strategy_id ? 'Clear all but approved leads, then hunt for new ones' : 'Pick a strategy first'}
             >
               {refreshing
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -486,19 +486,18 @@ function RefreshConfirmDialog({
       >
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Refresh leads for "{strategyName}"?</h3>
         <p className="text-sm text-gray-600 mb-4">
-          This will remove{' '}
+          This clears the board to make room for fresh leads — it removes{' '}
           <span className="font-semibold text-gray-900">
             {unwantedCount < 0
-              ? 'any unwanted leads'
-              : `${unwantedCount} unwanted lead${unwantedCount === 1 ? '' : 's'}`}
+              ? 'every lead you haven’t approved'
+              : `${unwantedCount} un-approved lead${unwantedCount === 1 ? '' : 's'}`}
           </span>{' '}
-          (disliked 👎 or rejected) and then hunt for new leads matching this strategy.
+          and then hunts for new ones matching this strategy.
         </p>
         <div className="text-xs text-gray-500 mb-5 space-y-1 bg-gray-50 rounded-lg p-3">
-          <div>✓ Liked leads (👍) — <span className="font-medium text-gray-700">kept</span></div>
-          <div>✓ Contacted / qualified leads — <span className="font-medium text-gray-700">kept</span></div>
-          <div>✓ Untouched "new" leads — <span className="font-medium text-gray-700">kept</span></div>
-          <div>✗ Disliked / rejected leads — <span className="font-medium text-red-600">removed</span></div>
+          <div>✓ Approved leads (👍 / qualified / contacted) — <span className="font-medium text-gray-700">kept</span></div>
+          <div>✗ Untouched "new" leads — <span className="font-medium text-red-600">removed</span></div>
+          <div>✗ Disliked / rejected / ignored leads — <span className="font-medium text-red-600">removed</span></div>
         </div>
         <div className="flex gap-2 justify-end">
           <button onClick={onCancel} className="btn-secondary text-sm">Cancel</button>

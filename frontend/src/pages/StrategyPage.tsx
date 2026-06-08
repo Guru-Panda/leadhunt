@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, ChevronRight, Loader2, Zap, CheckCircle, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, ChevronRight, Loader2, Zap, CheckCircle, Trash2, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react'
 import { strategyApi, type Strategy, type StrategyCreate } from '../api/strategy'
 import TagInput from '../components/TagInput'
 import clsx from 'clsx'
@@ -16,8 +16,28 @@ const EMPTY_FORM: StrategyCreate = {
   target_locations: [],
   target_company_size: [],
   competitors: [],
+  target_websites: [],
+  event_keywords: [],
+  webinars_enabled: true,
+  events_enabled: true,
   intent_threshold: 0.5,
 }
+
+const formFromStrategy = (s: Strategy): StrategyCreate => ({
+  title: s.title,
+  main_problem: s.main_problem,
+  ideal_customer: s.ideal_customer,
+  keywords: s.keywords,
+  buyer_phrases: s.buyer_phrases,
+  target_locations: s.target_locations,
+  target_company_size: s.target_company_size,
+  competitors: s.competitors ?? [],
+  target_websites: s.target_websites ?? [],
+  event_keywords: s.event_keywords ?? [],
+  webinars_enabled: s.webinars_enabled ?? true,
+  events_enabled: s.events_enabled ?? true,
+  intent_threshold: s.intent_threshold,
+})
 
 export default function StrategyPage() {
   const qc = useQueryClient()
@@ -39,17 +59,7 @@ export default function StrategyPage() {
       setIcpResult(r.data)
       setCreating(false)
       // Keep the form populated with the saved data (don't reset)
-      setForm({
-        title: r.data.title,
-        main_problem: r.data.main_problem,
-        ideal_customer: r.data.ideal_customer,
-        keywords: r.data.keywords,
-        buyer_phrases: r.data.buyer_phrases,
-        target_locations: r.data.target_locations,
-        target_company_size: r.data.target_company_size,
-        competitors: r.data.competitors ?? [],
-        intent_threshold: r.data.intent_threshold,
-      })
+      setForm(formFromStrategy(r.data))
     },
   })
 
@@ -98,17 +108,7 @@ export default function StrategyPage() {
     setSelected(s)
     setCreating(false)
     setIcpResult(s)
-    setForm({
-      title: s.title,
-      main_problem: s.main_problem,
-      ideal_customer: s.ideal_customer,
-      keywords: s.keywords,
-      buyer_phrases: s.buyer_phrases,
-      target_locations: s.target_locations,
-      target_company_size: s.target_company_size,
-      competitors: s.competitors ?? [],
-      intent_threshold: s.intent_threshold,
-    })
+    setForm(formFromStrategy(s))
   }
 
   const startCreating = () => {
@@ -139,22 +139,28 @@ export default function StrategyPage() {
             </div>
           ) : (
             strategies.map((s) => (
-              <button
+              <div
                 key={s.id}
-                onClick={() => selectStrategy(s)}
                 className={clsx(
-                  'w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-gray-50 transition-colors',
+                  'group w-full px-4 py-3 flex items-center gap-2 hover:bg-gray-50 transition-colors',
                   selected?.id === s.id && 'bg-primary/5'
                 )}
               >
-                <div className="flex-1 min-w-0">
+                <button onClick={() => selectStrategy(s)} className="flex-1 min-w-0 text-left">
                   <div className="text-sm font-medium text-gray-900 truncate">{s.title}</div>
                   <div className={clsx('text-xs mt-0.5', s.is_active ? 'text-green-600' : 'text-gray-400')}>
                     {s.is_active ? 'Active' : 'Paused'}
                   </div>
-                </div>
+                </button>
+                <button
+                  onClick={() => { if (confirm(`Delete strategy "${s.title}"? This also removes its leads.`)) deleteMut.mutate(s.id) }}
+                  className="p-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  title="Delete strategy"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
                 <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -254,8 +260,55 @@ export default function StrategyPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Target locations</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Specific websites <span className="font-normal text-gray-400">— restrict hunting to these sites (we search & extract leads from them)</span>
+                </label>
+                <TagInput value={form.target_websites} onChange={(v) => setForm({ ...form, target_websites: v })} placeholder="example.com, news.ycombinator.com…" />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Target locations <span className="font-normal text-gray-400">— used to scope in-person events</span></label>
                 <TagInput value={form.target_locations} onChange={(v) => setForm({ ...form, target_locations: v })} placeholder="London, New York, Remote…" />
+              </div>
+
+              {/* Opportunities — webinars (global) vs in-person events (location-scoped) */}
+              <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4 space-y-4">
+                <div className="text-sm font-semibold text-gray-700">Opportunities to hunt</div>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.webinars_enabled}
+                    onChange={(e) => setForm({ ...form, webinars_enabled: e.target.checked })}
+                    className="mt-0.5 w-4 h-4 accent-primary"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-800">Webinars</span>{' '}
+                    <span className="text-gray-400">— online, searched globally (no location filter)</span>
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.events_enabled}
+                    onChange={(e) => setForm({ ...form, events_enabled: e.target.checked })}
+                    className="mt-0.5 w-4 h-4 accent-primary"
+                  />
+                  <span className="text-sm">
+                    <span className="font-medium text-gray-800">In-person events</span>{' '}
+                    <span className="text-gray-400">
+                      — conferences & expos{form.target_locations.length > 0
+                        ? ` near ${form.target_locations.join(', ')}`
+                        : ' (add target locations above to focus these)'}
+                    </span>
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">Event / webinar keywords</label>
+                  <TagInput value={form.event_keywords} onChange={(v) => setForm({ ...form, event_keywords: v })} placeholder="growth marketing, fintech, AI…" />
+                </div>
               </div>
 
               <div>
@@ -374,6 +427,41 @@ export default function StrategyPage() {
                       </div>
                     </div>
                   ) : null}
+                </div>
+              </div>
+            )}
+
+            {/* Feedback learning — what the AI picked up from approve/reject */}
+            {icpResult && ((icpResult.learning_profile?.n_approved ?? 0) + (icpResult.learning_profile?.n_rejected ?? 0) >= 3) && (
+              <div className="mt-8 border-t border-gray-100 pt-6">
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  <span className="text-sm font-medium text-gray-700">Learned from your feedback</span>
+                </div>
+                <p className="text-xs text-gray-400 mb-4">
+                  Based on {icpResult.learning_profile?.n_approved ?? 0} approved and {icpResult.learning_profile?.n_rejected ?? 0} rejected leads — this nudges future scoring & source order.
+                </p>
+                <div className="space-y-3">
+                  {(icpResult.learning_profile?.liked_terms?.length ?? 0) > 0 && (
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1.5 font-medium uppercase tracking-wide">Leaning toward</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {icpResult.learning_profile!.liked_terms!.map((t) => (
+                          <span key={t} className="px-2.5 py-1 bg-green-50 text-green-700 text-xs rounded-md font-medium">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(icpResult.learning_profile?.disliked_terms?.length ?? 0) > 0 && (
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1.5 font-medium uppercase tracking-wide">Steering away from</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {icpResult.learning_profile!.disliked_terms!.map((t) => (
+                          <span key={t} className="px-2.5 py-1 bg-red-50 text-red-600 text-xs rounded-md font-medium line-through">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

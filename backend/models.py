@@ -75,6 +75,13 @@ class Strategy(Base):
     target_roles: Mapped[list[str]] = mapped_column(JSONType, default=list)
     target_industries: Mapped[list[str]] = mapped_column(JSONType, default=list)
     competitors: Mapped[list[str]] = mapped_column(JSONType, default=list)  # for switch-intent mining
+    # User-tunable targeting (editable in-app, re-analyzed on save)
+    target_websites: Mapped[list[str]] = mapped_column(JSONType, default=list)   # specific sites to hunt via site: search + extractor
+    event_keywords: Mapped[list[str]] = mapped_column(JSONType, default=list)    # extra terms to look for in webinars/events
+    webinars_enabled: Mapped[bool] = mapped_column(Boolean, default=True)        # global online webinars
+    events_enabled: Mapped[bool] = mapped_column(Boolean, default=True)          # in-person events (scoped to target_locations)
+    # Feedback learning — derived from approved/rejected leads, biases future scoring + source order
+    learning_profile: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     raw_icp_params: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     intent_threshold: Mapped[float] = mapped_column(Float, default=0.35)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

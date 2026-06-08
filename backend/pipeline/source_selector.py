@@ -131,13 +131,24 @@ def select_source_names(strategy) -> tuple[list[str], str]:
     if getattr(strategy, "competitors", None) and "competitor" in available:
         names = names + ["competitor"]
 
-    # Event opportunities are universally useful — always include them.
-    if "events" in available:
+    # Targeted-website hunting is opt-in — only when the user named specific sites.
+    if getattr(strategy, "target_websites", None) and "sites" in available:
+        names = names + ["sites"]
+
+    # Event/webinar opportunities — only when at least one opportunity type is on.
+    webinars_on = getattr(strategy, "webinars_enabled", True)
+    events_on = getattr(strategy, "events_enabled", True)
+    if (webinars_on or events_on) and "events" in available:
         names = names + ["events"]
 
     # De-dupe, preserve order
     seen: set[str] = set()
     ordered = [n for n in names if not (n in seen or seen.add(n))]
+
+    # Feedback learning: float sources the user keeps approving to the front,
+    # demote ones they keep rejecting (never drops any). Bounded, reversible.
+    from backend.pipeline.learning import apply_source_preferences
+    ordered = apply_source_preferences(ordered, getattr(strategy, "learning_profile", None))
     return ordered, reason
 
 

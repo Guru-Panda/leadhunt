@@ -13,6 +13,7 @@ from backend.sources import (
     jobs,
     competitor,
     events,
+    sites,
 )
 
 # Removed 2026-06-05 (audit): producthunt/ycombinator/companies_house (empty keys →
@@ -35,6 +36,7 @@ BASE_SOURCES = [
     jobs,
     competitor,
     events,
+    sites,
 ]
 
 # INTENT sources — the default hourly hunt.
